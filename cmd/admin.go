@@ -20,6 +20,14 @@ func requireAllMode() {
 	}
 }
 
+// wsErrMsg extracts the human-readable message from a failed WS response.
+func wsErrMsg(errMap map[string]any) string {
+	if m, ok := errMap["message"].(string); ok && m != "" {
+		return m
+	}
+	return "unknown error"
+}
+
 // wsCommand dials a WebSocket connection, sends the given payload, reads the
 // response, and closes the connection. The payload must include a "type" key.
 func wsCommand(payload map[string]any) (*client.WSMessage, error) {

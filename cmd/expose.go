@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"fmt"
-	"os"
 
 	"github.com/joaobarroca/hactl/output"
 	"github.com/spf13/cobra"
@@ -30,14 +29,7 @@ var exposeCmd = &cobra.Command{
 		}
 
 		if msg.Success != nil && !*msg.Success {
-			errMsg := "unknown error"
-			if msg.Error != nil {
-				if m, ok := msg.Error["message"].(string); ok {
-					errMsg = m
-				}
-			}
-			fmt.Fprintf(os.Stderr, "error: %s\n", errMsg)
-			os.Exit(1)
+			return output.Err("%s", wsErrMsg(msg.Error))
 		}
 
 		if !quiet {
@@ -70,14 +62,7 @@ var unexposeCmd = &cobra.Command{
 		}
 
 		if msg.Success != nil && !*msg.Success {
-			errMsg := "unknown error"
-			if msg.Error != nil {
-				if m, ok := msg.Error["message"].(string); ok {
-					errMsg = m
-				}
-			}
-			fmt.Fprintf(os.Stderr, "error: %s\n", errMsg)
-			os.Exit(1)
+			return output.Err("%s", wsErrMsg(msg.Error))
 		}
 
 		if !quiet {
