@@ -4,10 +4,19 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/joaobarroca/hactl/client"
 	"github.com/joaobarroca/hactl/output"
 	"github.com/spf13/cobra"
 )
+
+// restrictedServices are blocked in filter.mode: exposed.
+// Only permitted when the user explicitly sets filter.mode: all.
+var restrictedServices = map[string]bool{
+	"homeassistant.restart": true,
+	"homeassistant.stop":    true,
+}
 
 var serviceCmd = &cobra.Command{
 	Use:   "service",
@@ -32,11 +41,33 @@ Examples:
 		}
 		domain, svc := parts[0], parts[1]
 
+		// Block system-wide destructive services in exposed mode.
+		if restrictedServices[domain+"."+svc] && entityFilter.Mode() == "exposed" {
+			return output.Err(
+				"service %s.%s is not permitted in exposed mode\n  to enable it, set filter.mode: all in your config file",
+				domain, svc,
+			)
+		}
+
 		// Build data payload from flags
 		data := map[string]any{}
 
 		entity, _ := cmd.Flags().GetString("entity")
 		if entity != "" {
+			if !entityFilter.IsAllowed(entity) {
+				return output.Err("entity not found: %s", entity)
+			}
+			// Warn when the entity's domain doesn't match the service's domain.
+			// homeassistant.* services (turn_on, turn_off, toggle) are cross-domain by design.
+			if domain != "homeassistant" {
+				entityDomain, _, _ := strings.Cut(entity, ".")
+				if entityDomain != domain {
+					return output.Err(
+						"domain mismatch: service %s.%s cannot target a %s entity\n  did you mean: hactl service call %s.%s --entity %s",
+						domain, svc, entityDomain, entityDomain, svc, entity,
+					)
+				}
+			}
 			data["entity_id"] = entity
 		}
 
@@ -73,10 +104,31 @@ Examples:
 			}
 		}
 
-		states, err := getClient().CallService(domain, svc, data)
+		// Snapshot state before the call so we can detect when it settles.
+		var stateBefore *client.State
+		if entity != "" {
+			stateBefore, _ = getClient().GetState(entity)
+		}
+
+		_, err := getClient().CallService(domain, svc, data)
 		if err != nil {
+			if entity == "" {
+				return output.Err("%s\n  hint: this service may require --entity <entity_id>", err)
+			}
 			return output.Err("%s", err)
 		}
+
+		// Poll until the entity state changes or the timeout elapses.
+		// Many integrations return an empty/stale response immediately after
+		// a service call — the device hasn't acted yet.
+		var states []client.State
+		if entity != "" {
+			s := pollStateChange(entity, stateBefore, 3*time.Second, 250*time.Millisecond)
+			if s != nil {
+				states = []client.State{*s}
+			}
+		}
+
 		if quiet {
 			return nil
 		}
@@ -104,6 +156,25 @@ func init() {
 	serviceCallCmd.Flags().String("rgb", "", "RGB color as R,G,B (e.g. 255,128,0)")
 
 	serviceCmd.AddCommand(serviceCallCmd)
+}
+
+// pollStateChange polls entityID until its state differs from before, or timeout elapses.
+// Returns the latest state in either case (nil only if all fetches fail).
+func pollStateChange(entityID string, before *client.State, timeout, interval time.Duration) *client.State {
+	deadline := time.Now().Add(timeout)
+	var last *client.State
+	for time.Now().Before(deadline) {
+		time.Sleep(interval)
+		s, err := getClient().GetState(entityID)
+		if err != nil {
+			continue
+		}
+		last = s
+		if before == nil || s.State != before.State {
+			return s
+		}
+	}
+	return last
 }
 
 // parseValue attempts to parse a string as a number, bool, or falls back to string.

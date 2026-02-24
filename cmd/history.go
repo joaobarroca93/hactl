@@ -23,6 +23,9 @@ Examples:
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		entityID := args[0]
+		if !entityFilter.IsAllowed(entityID) {
+			return output.Err("entity not found: %s", entityID)
+		}
 
 		duration, err := time.ParseDuration(historyLast)
 		if err != nil {

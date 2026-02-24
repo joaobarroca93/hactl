@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/joaobarroca/hactl/client"
+	"github.com/joaobarroca/hactl/filter"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
@@ -18,6 +19,9 @@ var (
 
 	// restClient is shared across all commands.
 	restClient *client.Client
+
+	// entityFilter enforces entity visibility rules.
+	entityFilter *filter.Filter
 )
 
 var rootCmd = &cobra.Command{
@@ -26,11 +30,11 @@ var rootCmd = &cobra.Command{
 	Long: `hactl is a fast, single-binary CLI for Home Assistant.
 Built for scripting, AI agents, and developers who prefer the terminal.`,
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-		// Skip config validation for completion commands
+		// Skip config validation for completion commands.
 		if cmd.Name() == "completion" || cmd.Parent() != nil && cmd.Parent().Name() == "completion" {
 			return nil
 		}
-		return initClient()
+		return initClient(cmd.Name())
 	},
 }
 
@@ -77,11 +81,14 @@ func initConfig() {
 	viper.BindEnv("hass_token", "HASS_TOKEN")
 
 	viper.SetDefault("hass_url", "http://homeassistant.local:8123")
+	viper.SetDefault("filter.mode", "exposed")
 
 	_ = viper.ReadInConfig()
 }
 
-func initClient() error {
+// initClient validates config, creates the REST client, and initialises the
+// entity filter. Pass cmdName so the filter can skip cache loading for "sync".
+func initClient(cmdName string) error {
 	token := viper.GetString("hass_token")
 	if token == "" {
 		fmt.Fprintln(os.Stderr, "error: HASS_TOKEN is required. Set it via the HASS_TOKEN environment variable or hass_token in config.yaml")
@@ -93,7 +100,23 @@ func initClient() error {
 	}
 	baseURL = strings.TrimRight(baseURL, "/")
 	restClient = client.New(baseURL, token)
+
+	initFilter(cmdName == "sync")
 	return nil
+}
+
+// initFilter validates filter.mode and creates the entity filter.
+// skipCache skips loading the on-disk cache (used by hactl sync).
+func initFilter(skipCache bool) {
+	mode := viper.GetString("filter.mode")
+	if mode == "" {
+		mode = "exposed"
+	}
+	if mode != "exposed" && mode != "all" {
+		fmt.Fprintf(os.Stderr, "error: invalid filter.mode %q: must be \"exposed\" or \"all\"\n", mode)
+		os.Exit(1)
+	}
+	entityFilter = filter.New(mode, skipCache)
 }
 
 // getClient returns the shared REST client, initializing it if needed.

@@ -19,12 +19,13 @@ sudo mv hactl /usr/local/bin/
 
 ## Configuration
 
-hactl reads config from environment variables (preferred) or `~/.config/hactl/config.yaml`.
+hactl reads config from environment variables (preferred for secrets) or `~/.config/hactl/config.yaml`.
 
-| Env var      | Config key   | Default                          | Description                  |
-|--------------|--------------|----------------------------------|------------------------------|
-| `HASS_URL`   | `hass_url`   | `http://homeassistant.local:8123`| Home Assistant base URL      |
-| `HASS_TOKEN` | `hass_token` | *(required)*                     | Long-lived access token      |
+| Env var      | Config key     | Default                          | Description                  |
+|--------------|----------------|----------------------------------|------------------------------|
+| `HASS_URL`   | `hass_url`     | `http://homeassistant.local:8123`| Home Assistant base URL      |
+| `HASS_TOKEN` | `hass_token`   | *(required)*                     | Long-lived access token      |
+| —            | `filter.mode`  | `exposed`                        | Entity filter mode (see below)|
 
 ### Config file example
 
@@ -32,11 +33,34 @@ hactl reads config from environment variables (preferred) or `~/.config/hactl/co
 # ~/.config/hactl/config.yaml
 hass_url: http://192.168.1.10:8123
 hass_token: eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9...
+
+filter:
+  # "exposed" — only entities exposed to HA Assist (default, recommended)
+  # "all"     — no filter (must be set explicitly)
+  mode: exposed
 ```
 
 ### Getting a token
 
 In Home Assistant: **Profile → Long-Lived Access Tokens → Create Token**
+
+## Entity filter
+
+hactl enforces an entity allowlist so that AI agents and scripts can only see and act on the entities you have explicitly permitted.
+
+**Default behaviour (`filter.mode: exposed`):** only entities exposed to [HA Assist](https://www.home-assistant.io/voice_control/voice_remote_expose_devices/) are visible. All other entities appear as if they do not exist — `hactl` returns the same `entity not found` error whether an entity is hidden by the filter or genuinely absent from Home Assistant. This prevents callers from probing your entity namespace.
+
+**`filter.mode: all`:** no filter is applied. All entities are accessible. This must be set explicitly in the config file; there is no CLI flag or environment variable to override filter mode at runtime.
+
+### First-time setup
+
+After configuring your token, sync the allowlist once:
+
+```bash
+hactl sync
+```
+
+This connects to Home Assistant, fetches all entities exposed to HA Assist, and writes the list to `~/.config/hactl/exposed-entities.json`. Re-run `hactl sync` any time you change which entities are exposed in HA Assist.
 
 ## Global flags
 
@@ -48,6 +72,22 @@ In Home Assistant: **Profile → Long-Lived Access Tokens → Create Token**
 
 ## Commands
 
+### sync
+
+Fetch all entities exposed to HA Assist and write the local entity cache. Run this once on first setup, and again whenever you expose or hide entities in Home Assistant.
+
+```bash
+hactl sync
+# Synced 42 exposed entities to ~/.config/hactl/exposed-entities.json
+```
+
+### area
+
+```bash
+hactl area list
+hactl area list --plain
+```
+
 ### state
 
 ```bash
@@ -55,20 +95,30 @@ In Home Assistant: **Profile → Long-Lived Access Tokens → Create Token**
 hactl state get light.living_room
 hactl state get climate.bedroom --plain
 
-# Set a state directly
-hactl state set input_boolean.guest_mode on
-
 # List all states
 hactl state list
 hactl state list --domain light
 hactl state list --domain sensor
 hactl state list --area "living room"
+
+# Set state — only for virtual/helper entities (input_boolean, input_text, etc.)
+hactl state set input_boolean.guest_mode on
+hactl state set input_text.notes "away until Friday"
+
+# Hardware-backed entities (light, switch, climate, …) must use service call instead
+hactl state set light.living_room on  # and will raise an error
 ```
 
 ### service
 
+After a successful call, hactl polls the entity state until it reflects the change (up to 3 seconds), so the output always shows the settled state rather than a stale snapshot.
+
+The following errors are caught before the call is made:
+- **Missing `--entity`**: if HA returns an error and no entity was provided, a hint is added
+- **Domain mismatch**: `light.turn_on --entity switch.fan` is rejected — service and entity domains must match (`homeassistant.*` is exempt)
+- **Restricted services**: `homeassistant.restart` and `homeassistant.stop` are blocked in `filter.mode: exposed` (the default). Set `filter.mode: all` in your config to allow them.
+
 ```bash
-# Call any service
 hactl service call light.turn_on --entity light.living_room
 hactl service call light.turn_on --entity light.living_room --brightness 80
 hactl service call light.turn_on --entity light.living_room --rgb 255,128,0
@@ -82,7 +132,7 @@ hactl service call switch.toggle --entity switch.fan
 # Extra key=value pairs
 hactl service call script.my_script --data timeout=30 --data mode=fast
 
-# Restart HA
+# Restart HA — requires filter.mode: all in config
 hactl service call homeassistant.restart
 ```
 
@@ -197,16 +247,34 @@ Errors always go to stderr with exit code 1:
 
 ```
 error: entity not found: light.nonexistent
+error: switch entities are controlled via services
+  use: hactl service call switch.turn_on/off --entity switch.fan
+  services: switch.turn_on / switch.turn_off / switch.toggle
+error: domain mismatch: service light.turn_on cannot target a switch entity
+  did you mean: hactl service call switch.turn_on --entity switch.fan
+error: service homeassistant.restart is not permitted in exposed mode
+  to enable it, set filter.mode: all in your config file
+error: unexpected status 400: Bad Request
+  hint: this service may require --entity <entity_id>
 error: unauthorized: check your HASS_TOKEN
 error: connection refused: dial tcp 192.168.1.10:8123: connect: connection refused
 ```
 
 ## AI agent usage
 
-hactl is optimised for use by AI agents. Recommended patterns:
+hactl is optimised for use by AI agents. Recommended setup:
 
 ```bash
-# Get a full picture of the home
+# 1. Expose entities to HA Assist in the Home Assistant UI, then:
+hactl sync
+
+# 2. Give the agent read-only hactl access — only exposed entities are visible.
+```
+
+Recommended patterns:
+
+```bash
+# Get a full picture of the home (filtered to exposed entities)
 hactl summary --plain
 
 # Check a specific room before acting
@@ -218,3 +286,5 @@ hactl service call light.turn_on --entity light.living_room --brightness 60 --pl
 # Watch for changes after an action
 hactl events watch --type state_changed --domain light
 ```
+
+The entity filter means agents cannot enumerate or interact with entities you have not explicitly exposed — hidden entities and non-existent entities return the same error, preventing probing.

@@ -28,20 +28,14 @@ Examples:
 			return output.Err("%s", err)
 		}
 
+		// Apply entity filter before any domain/area processing.
+		states = entityFilter.FilterStates(states)
+
 		if summaryArea != "" {
 			filtered := states[:0]
-			areaLower := strings.ToLower(summaryArea)
 			for _, s := range states {
-				if areaID, ok := s.Attributes["area_id"].(string); ok {
-					if strings.ToLower(areaID) == areaLower {
-						filtered = append(filtered, s)
-						continue
-					}
-				}
-				if areaName, ok := s.Attributes["area"].(string); ok {
-					if strings.ToLower(areaName) == areaLower {
-						filtered = append(filtered, s)
-					}
+				if entityFilter.MatchesArea(s.EntityID, summaryArea) {
+					filtered = append(filtered, s)
 				}
 			}
 			states = filtered
@@ -188,6 +182,11 @@ func buildSummary(states []client.State) *Summary {
 				}
 			}
 
+		case "sensor":
+			if unit, ok := s.Attributes["unit_of_measurement"].(string); ok && unit != "" {
+				digest.Note = fmt.Sprintf("%s %s", s.State, unit)
+			}
+
 		case "media_player":
 			if active {
 				if title, ok := s.Attributes["media_title"].(string); ok && title != "" {
@@ -231,24 +230,72 @@ func buildSummaryPlain(s *Summary) string {
 		}
 		switch ds.Domain {
 		case "light":
-			if ds.Active == 0 {
-				continue
-			}
-			activeLights := []string{}
+			var on, off []string
 			for _, e := range ds.Entities {
+				n := e.FriendlyName
+				if n == "" {
+					n = e.EntityID
+				}
 				if isActiveState(e.State) {
-					n := e.FriendlyName
-					if n == "" {
-						n = e.EntityID
-					}
 					if e.Note != "" {
-						activeLights = append(activeLights, fmt.Sprintf("%s %s", n, e.Note))
+						on = append(on, fmt.Sprintf("%s %s", n, e.Note))
 					} else {
-						activeLights = append(activeLights, n)
+						on = append(on, n)
 					}
+				} else {
+					off = append(off, n)
 				}
 			}
-			parts = append(parts, fmt.Sprintf("%d light%s on (%s)", ds.Active, plural(ds.Active), strings.Join(activeLights, ", ")))
+			var sub []string
+			if len(on) > 0 {
+				sub = append(sub, fmt.Sprintf("%d on (%s)", len(on), strings.Join(on, ", ")))
+			}
+			if len(off) > 0 {
+				sub = append(sub, fmt.Sprintf("%d off (%s)", len(off), strings.Join(off, ", ")))
+			}
+			if len(sub) > 0 {
+				parts = append(parts, "lights: "+strings.Join(sub, ", "))
+			}
+
+		case "switch":
+			var on, off []string
+			for _, e := range ds.Entities {
+				n := e.FriendlyName
+				if n == "" {
+					n = e.EntityID
+				}
+				if isActiveState(e.State) {
+					on = append(on, n)
+				} else {
+					off = append(off, n)
+				}
+			}
+			var sub []string
+			if len(on) > 0 {
+				sub = append(sub, fmt.Sprintf("%d on (%s)", len(on), strings.Join(on, ", ")))
+			}
+			if len(off) > 0 {
+				sub = append(sub, fmt.Sprintf("%d off (%s)", len(off), strings.Join(off, ", ")))
+			}
+			if len(sub) > 0 {
+				parts = append(parts, "switches: "+strings.Join(sub, ", "))
+			}
+
+		case "sensor":
+			var readings []string
+			for _, e := range ds.Entities {
+				if e.Note == "" {
+					continue // skip sensors without a unit
+				}
+				n := e.FriendlyName
+				if n == "" {
+					n = e.EntityID
+				}
+				readings = append(readings, fmt.Sprintf("%s: %s", n, e.Note))
+			}
+			if len(readings) > 0 {
+				parts = append(parts, strings.Join(readings, ", "))
+			}
 
 		case "climate":
 			for _, e := range ds.Entities {
@@ -275,9 +322,8 @@ func buildSummaryPlain(s *Summary) string {
 					if n == "" {
 						n = e.EntityID
 					}
-					note := e.Note
-					if note != "" {
-						parts = append(parts, fmt.Sprintf("motion in %s %s", n, note))
+					if e.Note != "" {
+						parts = append(parts, fmt.Sprintf("motion in %s %s", n, e.Note))
 					} else {
 						parts = append(parts, fmt.Sprintf("%s active", n))
 					}

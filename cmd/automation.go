@@ -22,6 +22,9 @@ var automationListCmd = &cobra.Command{
 			return output.Err("%s", err)
 		}
 
+		// Apply entity filter before domain filtering.
+		states = entityFilter.FilterStates(states)
+
 		type AutomationInfo struct {
 			EntityID     string `json:"entity_id"`
 			State        string `json:"state"`
@@ -70,6 +73,9 @@ var automationTriggerCmd = &cobra.Command{
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		entityID := ensureAutomationPrefix(args[0])
+		if !entityFilter.IsAllowed(entityID) {
+			return output.Err("entity not found: %s", entityID)
+		}
 		_, err := getClient().CallService("automation", "trigger", map[string]any{
 			"entity_id": entityID,
 		})
@@ -93,6 +99,9 @@ var automationEnableCmd = &cobra.Command{
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		entityID := ensureAutomationPrefix(args[0])
+		if !entityFilter.IsAllowed(entityID) {
+			return output.Err("entity not found: %s", entityID)
+		}
 		_, err := getClient().CallService("automation", "turn_on", map[string]any{
 			"entity_id": entityID,
 		})
@@ -116,6 +125,9 @@ var automationDisableCmd = &cobra.Command{
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		entityID := ensureAutomationPrefix(args[0])
+		if !entityFilter.IsAllowed(entityID) {
+			return output.Err("entity not found: %s", entityID)
+		}
 		_, err := getClient().CallService("automation", "turn_off", map[string]any{
 			"entity_id": entityID,
 		})
