@@ -1,1129 +1,1132 @@
-# hactl test runner
+# hactl capability testing plan
 
-Agent-executable capability test plan. Execute each code block in sequence
-in the **same bash session** — variables defined earlier are available in later blocks.
+This document provides a structured set of manual tests to verify every capability
+described in `CAPABILITIES.md` against a real Home Assistant setup.
 
-**Agent instructions:**
-1. Run the **Helpers and discovery** block first.
-2. Run each numbered section block in order.
-3. Run the **Security audit** block last to validate captured logs.
-4. Set `HACTL_AUTO=1` before starting to skip all destructive/interactive tests.
-
-Every block prints `[PASS]` / `[FAIL]` / `[SKIP]` inline.
-Run the **Summary** block (end of file) after all sections for a final count.
+**Before you start**, replace the placeholder entity IDs below with real ones from
+your HA setup. Every section begins with a "Discovery" step that shows you how to
+find suitable entity IDs.
 
 ---
 
-## Helpers and discovery
+## Prerequisites
+
+### 0.1 — Environment setup
 
 ```bash
-# ---------------------------------------------------------------------------
-# Log directory
-# ---------------------------------------------------------------------------
-export HACTL_TEST_LOG="$HOME/hactl-test-logs/$(date +%Y%m%d_%H%M%S)"
-export HACTL_AUTO="${HACTL_AUTO:-0}"
+# Set the required env vars (or put them in ~/.config/hactl/config.yaml)
+export HASS_URL=http://<your-ha-host>:8123
+export HASS_TOKEN=<your-long-lived-access-token>
+```
+
+Expected: no error output; all subsequent commands succeed.
+
+### 0.2 — Sync exposed entities
+
+```bash
+hactl sync
+```
+
+Expected:
+- Prints `Synced N exposed entities to ~/.config/hactl/exposed-entities.json`
+- Prints `Synced N entity→area mappings to ~/.config/hactl/entity-areas.json`
+- Both cache files exist on disk.
+
+### 0.3 — Audit log setup
+
+All test output should be saved to a dated log directory so results can be
+reviewed later for unexpected data exposure or security regressions.
+
+```bash
+# Create a timestamped directory for this test session
+export HACTL_TEST_LOG=~/hactl-test-logs/$(date +%Y%m%d_%H%M%S)
 mkdir -p "$HACTL_TEST_LOG"
-: > "$HACTL_TEST_LOG/failures.log"
-echo "Session log: $HACTL_TEST_LOG"
-echo "Auto mode:   $HACTL_AUTO  (set HACTL_AUTO=1 to skip destructive tests)"
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-_pass() { echo "[PASS] $*"; }
-_fail() { echo "[FAIL] $*"; echo "[FAIL] $*" >> "$HACTL_TEST_LOG/failures.log"; }
-
-# run <label> <hactl_subcommand_and_args...>
+# Helper: run a hactl command, print it, log both stdout and stderr with a label.
+# Usage: run <label> <hactl args...>
 run() {
   local label="$1"; shift
-  echo ""
+  local outfile="$HACTL_TEST_LOG/${label}.out"
+  local errfile="$HACTL_TEST_LOG/${label}.err"
   echo "==> $label: hactl $*"
-  hactl "$@" \
-    > "$HACTL_TEST_LOG/${label}.out" \
-    2>"$HACTL_TEST_LOG/${label}.err"
-  echo "$?" > "$HACTL_TEST_LOG/${label}.exit"
-  cat "$HACTL_TEST_LOG/${label}.out"
-  [[ -s "$HACTL_TEST_LOG/${label}.err" ]] && { echo "[stderr]"; cat "$HACTL_TEST_LOG/${label}.err"; }
+  hactl "$@" 2>"$errfile" | tee "$outfile"
+  local rc=$?
+  # Log stderr too if non-empty
+  [[ -s "$errfile" ]] && echo "[stderr]" && cat "$errfile"
+  echo "[exit: $rc]"
+  echo "$rc" > "$HACTL_TEST_LOG/${label}.exit"
+  return $rc
 }
-
-# assert_exit <expected_code> <label>
-assert_exit() {
-  local expected="$1" label="$2"
-  local actual; actual=$(cat "$HACTL_TEST_LOG/${label}.exit" 2>/dev/null)
-  [[ "$actual" == "$expected" ]] \
-    && _pass "$label: exit=$expected" \
-    || _fail "$label: exit=$actual (expected $expected)"
-}
-
-# assert_json <label> '<jq_bool_expression>'
-assert_json() {
-  local label="$1" expr="$2"
-  local r; r=$(jq -r "if ($expr) then \"PASS\" else \"FAIL\" end" \
-    "$HACTL_TEST_LOG/${label}.out" 2>/dev/null)
-  [[ "$r" == "PASS" ]] \
-    && _pass "$label: $expr" \
-    || _fail "$label: $expr → $r"
-}
-
-# assert_stderr <label> '<grep_pattern>'
-assert_stderr() {
-  local label="$1" pattern="$2"
-  grep -q "$pattern" "$HACTL_TEST_LOG/${label}.err" \
-    && _pass "$label: stderr contains '$pattern'" \
-    || _fail "$label: stderr missing '$pattern'"
-}
-
-# assert_nonempty_stdout <label>
-assert_nonempty_stdout() {
-  [[ -s "$HACTL_TEST_LOG/${1}.out" ]] \
-    && _pass "$1: stdout non-empty" \
-    || _fail "$1: stdout empty"
-}
-
-# skip_if_unset <VAR_NAME> <section_label>
-# Returns 1 (→ skip) if var is empty, 0 (→ continue) otherwise.
-skip_if_unset() {
-  local var="$1" section="$2"
-  [[ -z "${!var}" ]] && { echo "[SKIP] $var not found — skipping $section"; return 1; }
-  return 0
-}
-
-# confirm <message>
-# In HACTL_AUTO=1 mode returns 1 (caller should skip). Otherwise waits for Enter.
-confirm() {
-  if [[ "$HACTL_AUTO" == "1" ]]; then
-    echo "[SKIP] $1 (HACTL_AUTO=1)"
-    return 1
-  fi
-  echo ""
-  echo "[HUMAN REQUIRED] $1"
-  echo "Press Enter to proceed, or Ctrl-C to abort..."
-  read -r
-  return 0
-}
-
-# ---------------------------------------------------------------------------
-# Discovery: pick the first exposed entity of each domain
-# ---------------------------------------------------------------------------
-_first() {
-  hactl state list --domain "$1" 2>/dev/null | jq -r '.[0].entity_id // empty'
-}
-
-export LIGHT_ID=$(_first light)
-export SWITCH_ID=$(_first switch)
-export CLIMATE_ID=$(_first climate)
-export COVER_ID=$(_first cover)
-export FAN_ID=$(_first fan)
-export MEDIA_PLAYER_ID=$(_first media_player)
-export VACUUM_ID=$(_first vacuum)
-export LOCK_ID=$(_first lock)
-export ALARM_ID=$(_first alarm_control_panel)
-export SIREN_ID=$(_first siren)
-export SCENE_ID=$(_first scene)
-export SCRIPT_ID=$(_first script)
-export BUTTON_ID=$(_first button)
-export SENSOR_ID=$(_first sensor)
-export BINARY_SENSOR_ID=$(_first binary_sensor)
-export INPUT_BOOLEAN_ID=$(_first input_boolean)
-export INPUT_TEXT_ID=$(_first input_text)
-export INPUT_NUMBER_ID=$(_first input_number)
-export INPUT_SELECT_ID=$(_first input_select)
-export INPUT_DATETIME_ID=$(_first input_datetime)
-export AUTOMATION_ID=$(_first automation)
-export TODO_ID=$(_first todo)
-export PERSON_ID=$(_first person)
-export WEATHER_ID=$(_first weather)
-export AREA_ID=$(hactl area list 2>/dev/null | jq -r '.[0].area_id // empty')
-
-echo ""
-echo "=== Discovered entities ==="
-for v in LIGHT_ID SWITCH_ID CLIMATE_ID COVER_ID FAN_ID MEDIA_PLAYER_ID \
-          VACUUM_ID LOCK_ID ALARM_ID SIREN_ID SCENE_ID SCRIPT_ID BUTTON_ID \
-          SENSOR_ID BINARY_SENSOR_ID INPUT_BOOLEAN_ID INPUT_TEXT_ID \
-          INPUT_NUMBER_ID INPUT_SELECT_ID INPUT_DATETIME_ID AUTOMATION_ID \
-          TODO_ID PERSON_ID WEATHER_ID AREA_ID; do
-  printf "  %-25s %s\n" "$v" "${!v:-(not found — relevant sections will be skipped)}"
-done
 ```
 
----
+Use `run <label> <args>` throughout your session instead of bare `hactl` calls.
+Labels become filenames, so use short snake_case names (e.g. `state_list`,
+`expose_guard`).
 
-## 0. Prerequisites
+> **Token safety:** `HASS_TOKEN` must never appear in output files. The helper
+> above does not log env vars, but verify manually before sharing any logs:
+> ```bash
+> grep -r "$HASS_TOKEN" "$HACTL_TEST_LOG" && echo "TOKEN FOUND IN LOGS — review before sharing"
+> ```
+
+### 0.4 — No-token guard
 
 ```bash
-echo "=== 0. Prerequisites ==="
-
-# 0.1 — Sync exposed entities
-run "sync" sync
-assert_exit 0 "sync"
-assert_stderr "sync" "Synced"      # message goes to stdout; check it
-[[ -f ~/.config/hactl/exposed-entities.json ]] \
-  && _pass "sync: exposed-entities.json exists" \
-  || _fail "sync: exposed-entities.json missing"
-[[ -f ~/.config/hactl/entity-areas.json ]] \
-  && _pass "sync: entity-areas.json exists" \
-  || _fail "sync: entity-areas.json missing"
-
-# 0.2 — No-token guard
-SAVED_TOKEN="$HASS_TOKEN"
 unset HASS_TOKEN
-run "no_token_guard" state list
-assert_exit 1 "no_token_guard"
-assert_stderr "no_token_guard" "HASS_TOKEN is required"
-export HASS_TOKEN="$SAVED_TOKEN"
-_pass "no_token_guard: token restored"
-
-# 0.3 — Token not in any log output so far
-if grep -qr "$HASS_TOKEN" "$HACTL_TEST_LOG" 2>/dev/null; then
-  _fail "token_leak_prereq: HASS_TOKEN found in log files"
-else
-  _pass "token_leak_prereq: HASS_TOKEN not in logs"
-fi
+hactl state list
+export HASS_TOKEN=<your-token>   # restore for the rest of the tests
 ```
+
+Expected: `error: HASS_TOKEN is required. Set it via the HASS_TOKEN environment variable or hass_token in config.yaml`
 
 ---
 
 ## 1. State — read
 
+### 1.1 — List all exposed entities (JSON)
+
 ```bash
-echo "=== 1. State read ==="
-
-# 1.1 — List all exposed entities
-run "state_list" state list
-assert_exit 0 "state_list"
-assert_json "state_list" 'type == "array"'
-assert_json "state_list" 'length > 0'
-
-# 1.2 — List by domain
-skip_if_unset LIGHT_ID "1.2 list by domain" && {
-  run "state_list_domain" state list --domain light
-  assert_exit 0 "state_list_domain"
-  assert_json "state_list_domain" '[.[].entity_id | startswith("light.")] | all'
-}
-
-# 1.3 — List by area
-skip_if_unset AREA_ID "1.3 list by area" && {
-  run "state_list_area" state list --area "$AREA_ID"
-  assert_exit 0 "state_list_area"
-  assert_json "state_list_area" 'type == "array"'
-}
-
-# 1.4 — Get a single entity (JSON)
-skip_if_unset SENSOR_ID "1.4 state get json" && {
-  run "state_get" state get "$SENSOR_ID"
-  assert_exit 0 "state_get"
-  assert_json "state_get" 'has("entity_id") and has("state") and has("attributes") and has("last_changed")'
-}
-
-# 1.5 — Get a single entity (plain)
-skip_if_unset LIGHT_ID "1.5 state get plain" && {
-  run "state_get_plain" state get "$LIGHT_ID" --plain
-  assert_exit 0 "state_get_plain"
-  assert_nonempty_stdout "state_get_plain"
-  # Plain output must contain the entity_id and not be JSON
-  grep -q "$LIGHT_ID" "$HACTL_TEST_LOG/state_get_plain.out" \
-    && _pass "state_get_plain: entity_id in output" \
-    || _fail "state_get_plain: entity_id missing"
-  grep -qv '^\[' "$HACTL_TEST_LOG/state_get_plain.out" \
-    && _pass "state_get_plain: output is not JSON" \
-    || _fail "state_get_plain: output looks like JSON"
-}
-
-# 1.6 — jq pipeline
-run "state_list_jq" state list
-assert_exit 0 "state_list_jq"
-jq -r '.[] | .entity_id' "$HACTL_TEST_LOG/state_list_jq.out" > /dev/null \
-  && _pass "state_list_jq: jq pipeline works" \
-  || _fail "state_list_jq: jq failed"
-
-# 1.7 — Non-existent entity returns correct error
-run "state_get_nonexistent" state get "light.this_entity_does_not_exist"
-assert_exit 1 "state_get_nonexistent"
-assert_stderr "state_get_nonexistent" "entity not found: light.this_entity_does_not_exist"
+hactl state list
 ```
+
+Expected:
+- JSON array printed to stdout.
+- Every object has `entity_id`, `state`, and `attributes` fields.
+- Only entities you have exposed to HA Assist appear.
+
+### 1.2 — List by domain
+
+```bash
+hactl state list --domain light
+hactl state list --domain sensor
+hactl state list --domain binary_sensor
+hactl state list --domain switch
+```
+
+Expected: each command returns only entities whose `entity_id` starts with the
+given domain prefix.
+
+### 1.3 — List by area
+
+```bash
+# First, find area ids
+hactl area list --plain
+# Pick an area_id (e.g. "sala") then:
+hactl state list --area sala
+```
+
+Expected: only entities assigned to that area appear.
+
+### 1.4 — Get a single entity (JSON)
+
+```bash
+hactl state get light.<your_light>
+hactl state get sensor.<your_sensor>
+hactl state get binary_sensor.<your_binary_sensor>
+```
+
+Expected: a single JSON object with `entity_id`, `state`, `attributes`, and
+`last_changed`.
+
+### 1.5 — Get a single entity (plain)
+
+```bash
+hactl state get light.<your_light> --plain
+hactl state get climate.<your_climate> --plain
+```
+
+Expected: compact single line, e.g. `light.living_room: on (brightness 60%)`.
+
+### 1.6 — jq pipeline
+
+```bash
+hactl state list --domain light | jq '.[] | select(.state == "on") | .entity_id'
+```
+
+Expected: entity IDs of all lights currently on, one per line.
+
+### 1.7 — Hidden / non-existent entity
+
+```bash
+hactl state get light.this_entity_does_not_exist
+```
+
+Expected: `error: entity not found: light.this_entity_does_not_exist` (exit code non-zero).
 
 ---
 
 ## 2. State — set (virtual helpers only)
 
+### 2.1 — input_boolean
+
 ```bash
-echo "=== 2. State set ==="
+# Discovery
+hactl state list --domain input_boolean
 
-# 2.1 — input_boolean round-trip
-skip_if_unset INPUT_BOOLEAN_ID "2.1 input_boolean" && {
-  run "state_set_bool_on" state set "$INPUT_BOOLEAN_ID" on
-  assert_exit 0 "state_set_bool_on"
-  assert_json "state_set_bool_on" '.state == "on"'
+# Test
+hactl state set input_boolean.<your_boolean> on
+hactl state get input_boolean.<your_boolean>    # verify state is "on"
 
-  run "state_set_bool_off" state set "$INPUT_BOOLEAN_ID" off
-  assert_exit 0 "state_set_bool_off"
-  assert_json "state_set_bool_off" '.state == "off"'
-}
-
-# 2.2 — input_text
-skip_if_unset INPUT_TEXT_ID "2.2 input_text" && {
-  run "state_set_text" state set "$INPUT_TEXT_ID" "hactl test value"
-  assert_exit 0 "state_set_text"
-  assert_json "state_set_text" '.state == "hactl test value"'
-}
-
-# 2.3 — Plain output on set
-skip_if_unset INPUT_BOOLEAN_ID "2.3 plain set" && {
-  run "state_set_plain" state set "$INPUT_BOOLEAN_ID" on --plain
-  assert_exit 0 "state_set_plain"
-  grep -q "set to on" "$HACTL_TEST_LOG/state_set_plain.out" \
-    && _pass "state_set_plain: 'set to on' in output" \
-    || _fail "state_set_plain: expected 'set to on'"
-}
-
-# 2.4 — Quiet mode
-skip_if_unset INPUT_BOOLEAN_ID "2.4 quiet set" && {
-  run "state_set_quiet" state set "$INPUT_BOOLEAN_ID" off --quiet
-  assert_exit 0 "state_set_quiet"
-  [[ ! -s "$HACTL_TEST_LOG/state_set_quiet.out" ]] \
-    && _pass "state_set_quiet: stdout empty" \
-    || _fail "state_set_quiet: unexpected stdout"
-}
-
-# 2.5 — Blocked on hardware domains
-for domain in light switch climate cover fan media_player vacuum lock \
-              alarm_control_panel siren button scene script; do
-  # Skip if no entity exposed for this domain
-  DOMAIN_ENTITY=$(hactl state list --domain "$domain" 2>/dev/null | jq -r '.[0].entity_id // empty')
-  [[ -z "$DOMAIN_ENTITY" ]] && continue
-  label="state_set_blocked_${domain}"
-  run "$label" state set "$DOMAIN_ENTITY" on
-  assert_exit 1 "$label"
-  assert_stderr "$label" "entities are controlled via services"
-done
+hactl state set input_boolean.<your_boolean> off
+hactl state get input_boolean.<your_boolean>    # verify state is "off"
 ```
+
+Expected: state changes reflected immediately.
+
+### 2.2 — input_text
+
+```bash
+# Discovery
+hactl state list --domain input_text
+
+# Test
+hactl state set input_text.<your_text> "testing hactl"
+hactl state get input_text.<your_text>    # verify value
+```
+
+Expected: state is the string you set.
+
+### 2.3 — Plain output on set
+
+```bash
+hactl state set input_boolean.<your_boolean> on --plain
+```
+
+Expected: `input_boolean.<id> set to on`
+
+### 2.4 — Quiet mode on set
+
+```bash
+hactl state set input_boolean.<your_boolean> off --quiet
+echo "exit: $?"
+```
+
+Expected: no stdout, exit code 0.
+
+### 2.5 — Blocked: state set on hardware domains
+
+For each of these, the command must fail with a helpful error:
+
+```bash
+hactl state set light.<your_light> on
+hactl state set switch.<your_switch> on
+hactl state set climate.<your_climate> heat
+hactl state set cover.<your_cover> open
+hactl state set fan.<your_fan> on
+hactl state set media_player.<your_media_player> on
+hatml state set vacuum.<your_vacuum> cleaning
+hactl state set lock.<your_lock> unlocked
+hactl state set alarm_control_panel.<your_alarm> armed_away
+hactl state set siren.<your_siren> on
+hactl state set button.<your_button> on
+hactl state set scene.<your_scene> on
+hactl state set script.<your_script> on
+```
+
+Expected for each: `error: <domain> entities are controlled via services` with a
+hint listing the correct service call.
 
 ---
 
 ## 3. Service calls
 
+### 3.1 — light
+
+**Discovery:**
 ```bash
-echo "=== 3. Service calls ==="
-
-# 3.1 — light
-skip_if_unset LIGHT_ID "3.1 light" && {
-  run "svc_light_on"  service call light.turn_on  --entity "$LIGHT_ID"
-  assert_exit 0 "svc_light_on"
-
-  run "svc_light_off" service call light.turn_off --entity "$LIGHT_ID"
-  assert_exit 0 "svc_light_off"
-
-  run "svc_light_brightness" service call light.turn_on --entity "$LIGHT_ID" --brightness 60
-  assert_exit 0 "svc_light_brightness"
-
-  run "svc_light_rgb" service call light.turn_on --entity "$LIGHT_ID" --rgb 255,140,0
-  assert_exit 0 "svc_light_rgb"
-
-  run "svc_light_toggle" service call light.toggle --entity "$LIGHT_ID"
-  assert_exit 0 "svc_light_toggle"
-
-  # Confirm physical state via state get
-  run "svc_light_verify" state get "$LIGHT_ID"
-  assert_exit 0 "svc_light_verify"
-  assert_json "svc_light_verify" 'has("state")'
-}
-
-# 3.2 — switch
-skip_if_unset SWITCH_ID "3.2 switch" && {
-  run "svc_switch_on"     service call switch.turn_on  --entity "$SWITCH_ID"
-  assert_exit 0 "svc_switch_on"
-  run "svc_switch_off"    service call switch.turn_off --entity "$SWITCH_ID"
-  assert_exit 0 "svc_switch_off"
-  run "svc_switch_toggle" service call switch.toggle   --entity "$SWITCH_ID"
-  assert_exit 0 "svc_switch_toggle"
-}
-
-# 3.3 — climate
-skip_if_unset CLIMATE_ID "3.3 climate" && {
-  run "svc_climate_temp" service call climate.set_temperature --entity "$CLIMATE_ID" --temperature 21.5
-  assert_exit 0 "svc_climate_temp"
-  run "svc_climate_mode" service call climate.set_hvac_mode   --entity "$CLIMATE_ID" --hvac-mode heat
-  assert_exit 0 "svc_climate_mode"
-  run "svc_climate_off"  service call climate.set_hvac_mode   --entity "$CLIMATE_ID" --hvac-mode off
-  assert_exit 0 "svc_climate_off"
-}
-
-# 3.4 — cover
-skip_if_unset COVER_ID "3.4 cover" && {
-  run "svc_cover_open"  service call cover.open_cover  --entity "$COVER_ID"
-  assert_exit 0 "svc_cover_open"
-  run "svc_cover_close" service call cover.close_cover --entity "$COVER_ID"
-  assert_exit 0 "svc_cover_close"
-  run "svc_cover_pos"   service call cover.set_cover_position --entity "$COVER_ID" --data position=50
-  assert_exit 0 "svc_cover_pos"
-  run "svc_cover_stop"  service call cover.stop_cover  --entity "$COVER_ID"
-  assert_exit 0 "svc_cover_stop"
-}
-
-# 3.5 — fan
-skip_if_unset FAN_ID "3.5 fan" && {
-  run "svc_fan_on"  service call fan.turn_on  --entity "$FAN_ID"
-  assert_exit 0 "svc_fan_on"
-  run "svc_fan_off" service call fan.turn_off --entity "$FAN_ID"
-  assert_exit 0 "svc_fan_off"
-}
-
-# 3.6 — media_player
-skip_if_unset MEDIA_PLAYER_ID "3.6 media_player" && {
-  run "svc_media_pause" service call media_player.media_pause --entity "$MEDIA_PLAYER_ID"
-  assert_exit 0 "svc_media_pause"
-  run "svc_media_vol"   service call media_player.volume_set  --entity "$MEDIA_PLAYER_ID" --data volume_level=0.3
-  assert_exit 0 "svc_media_vol"
-}
-
-# 3.7 — vacuum
-skip_if_unset VACUUM_ID "3.7 vacuum" && {
-  confirm "About to send vacuum.return_to_base to $VACUUM_ID" && {
-    run "svc_vacuum_dock" service call vacuum.return_to_base --entity "$VACUUM_ID"
-    assert_exit 0 "svc_vacuum_dock"
-  }
-}
-
-# 3.8 — lock  ⚠ physical device
-skip_if_unset LOCK_ID "3.8 lock" && {
-  confirm "About to lock/unlock $LOCK_ID — ensure you can re-lock it immediately" && {
-    run "svc_lock_lock"   service call lock.lock   --entity "$LOCK_ID"
-    assert_exit 0 "svc_lock_lock"
-    run "svc_lock_unlock" service call lock.unlock --entity "$LOCK_ID"
-    assert_exit 0 "svc_lock_unlock"
-    run "svc_lock_relock" service call lock.lock   --entity "$LOCK_ID"
-    assert_exit 0 "svc_lock_relock"
-  }
-}
-
-# 3.9 — alarm_control_panel  ⚠ real alarm
-skip_if_unset ALARM_ID "3.9 alarm" && {
-  confirm "About to arm/disarm alarm $ALARM_ID — use a test/simulator alarm only" && {
-    run "svc_alarm_arm_home" service call alarm_control_panel.alarm_arm_home  --entity "$ALARM_ID"
-    assert_exit 0 "svc_alarm_arm_home"
-    run "svc_alarm_disarm"   service call alarm_control_panel.alarm_disarm    --entity "$ALARM_ID" --data code=1234
-    assert_exit 0 "svc_alarm_disarm"
-  }
-}
-
-# 3.10 — siren  ⚠ audible
-skip_if_unset SIREN_ID "3.10 siren" && {
-  confirm "About to activate siren $SIREN_ID" && {
-    run "svc_siren_on"  service call siren.turn_on  --entity "$SIREN_ID"
-    assert_exit 0 "svc_siren_on"
-    run "svc_siren_off" service call siren.turn_off --entity "$SIREN_ID"
-    assert_exit 0 "svc_siren_off"
-  }
-}
-
-# 3.11 — scene
-skip_if_unset SCENE_ID "3.11 scene" && {
-  run "svc_scene_on" service call scene.turn_on --entity "$SCENE_ID"
-  assert_exit 0 "svc_scene_on"
-}
-
-# 3.12 — script
-skip_if_unset SCRIPT_ID "3.12 script" && {
-  run "svc_script_run" service call script.turn_on --entity "$SCRIPT_ID"
-  assert_exit 0 "svc_script_run"
-}
-
-# 3.13 — button
-skip_if_unset BUTTON_ID "3.13 button" && {
-  confirm "About to press $BUTTON_ID — verify it triggers a safe action" && {
-    run "svc_button_press" service call button.press --entity "$BUTTON_ID"
-    assert_exit 0 "svc_button_press"
-  }
-}
-
-# 3.14 — input_number
-skip_if_unset INPUT_NUMBER_ID "3.14 input_number" && {
-  run "svc_input_num" service call input_number.set_value --entity "$INPUT_NUMBER_ID" --data value=50
-  assert_exit 0 "svc_input_num"
-  run "svc_input_num_verify" state get "$INPUT_NUMBER_ID"
-  assert_exit 0 "svc_input_num_verify"
-  assert_json "svc_input_num_verify" '.state == "50" or (.state | tonumber) == 50'
-}
-
-# 3.15 — input_select
-skip_if_unset INPUT_SELECT_ID "3.15 input_select" && {
-  OPTION=$(hactl state get "$INPUT_SELECT_ID" 2>/dev/null | jq -r '.attributes.options[0] // empty')
-  [[ -n "$OPTION" ]] && {
-    run "svc_input_select" service call input_select.select_option \
-      --entity "$INPUT_SELECT_ID" --data "option=$OPTION"
-    assert_exit 0 "svc_input_select"
-  }
-}
-
-# 3.16 — input_datetime
-skip_if_unset INPUT_DATETIME_ID "3.16 input_datetime" && {
-  run "svc_input_dt" service call input_datetime.set_datetime \
-    --entity "$INPUT_DATETIME_ID" --data time=07:30:00
-  assert_exit 0 "svc_input_dt"
-}
-
-# 3.17 — Domain mismatch guard
-skip_if_unset LIGHT_ID "3.17 domain mismatch" && {
-  run "svc_domain_mismatch" service call switch.turn_on --entity "$LIGHT_ID"
-  assert_exit 1 "svc_domain_mismatch"
-  assert_stderr "svc_domain_mismatch" "domain mismatch"
-}
-
-# 3.18 — Missing --entity hint
-run "svc_missing_entity" service call light.turn_on
-assert_exit 1 "svc_missing_entity"
-assert_stderr "svc_missing_entity" "entity"
-
-# 3.19 — homeassistant cross-domain (exempt from domain-mismatch check)
-skip_if_unset LIGHT_ID "3.19 homeassistant cross-domain" && {
-  run "svc_ha_turn_off" service call homeassistant.turn_off --entity "$LIGHT_ID"
-  assert_exit 0 "svc_ha_turn_off"
-  run "svc_ha_turn_on"  service call homeassistant.turn_on  --entity "$LIGHT_ID"
-  assert_exit 0 "svc_ha_turn_on"
-}
+hactl state list --domain light --plain
 ```
+
+Replace `light.<id>` with a real entity from your setup.
+
+```bash
+# Turn on
+hactl service call light.turn_on --entity light.<id>
+hactl state get light.<id> --plain   # verify: on
+
+# Turn off
+hactl service call light.turn_off --entity light.<id>
+hactl state get light.<id> --plain   # verify: off
+
+# Toggle
+hactl service call light.toggle --entity light.<id>
+```
+
+Convenience flags (use a dimmable colour bulb):
+```bash
+# Brightness (0–100 → converted to 0–255 internally)
+hactl service call light.turn_on --entity light.<id> --brightness 60
+
+# RGB colour
+hactl service call light.turn_on --entity light.<id> --rgb 255,140,0
+
+# Colour temperature in mireds
+hactl service call light.turn_on --entity light.<id> --color-temp 370
+```
+
+Expected: lights respond physically; `state get` after the call reflects the new state.
+
+### 3.2 — switch
+
+**Discovery:** `hactl state list --domain switch --plain`
+
+```bash
+hactl service call switch.turn_on  --entity switch.<id>
+hactl state get switch.<id> --plain   # verify: on
+
+hactl service call switch.turn_off --entity switch.<id>
+hactl state get switch.<id> --plain   # verify: off
+
+hactl service call switch.toggle   --entity switch.<id>
+```
+
+### 3.3 — climate
+
+**Discovery:** `hactl state list --domain climate --plain`
+
+```bash
+# Set temperature
+hactl service call climate.set_temperature --entity climate.<id> --temperature 21.5
+
+# Set HVAC mode
+hactl service call climate.set_hvac_mode --entity climate.<id> --hvac-mode heat
+hactl service call climate.set_hvac_mode --entity climate.<id> --hvac-mode off
+
+# Set fan mode via --data
+hactl service call climate.set_fan_mode --entity climate.<id> --data fan_mode=auto
+
+# Turn on / off
+hactl service call climate.turn_on  --entity climate.<id>
+hactl service call climate.turn_off --entity climate.<id>
+
+# Verify attributes
+hactl state get climate.<id> | jq '{mode: .attributes.hvac_mode, setpoint: .attributes.temperature, current: .attributes.current_temperature}'
+```
+
+### 3.4 — cover
+
+**Discovery:** `hactl state list --domain cover --plain`
+
+```bash
+hactl service call cover.open_cover  --entity cover.<id>
+hactl service call cover.close_cover --entity cover.<id>
+hactl service call cover.set_cover_position --entity cover.<id> --data position=50
+hactl service call cover.stop_cover  --entity cover.<id>
+hactl service call cover.toggle      --entity cover.<id>
+
+# Tilt (if supported by your cover)
+hactl service call cover.set_cover_tilt_position --entity cover.<id> --data tilt_position=45
+```
+
+### 3.5 — fan
+
+**Discovery:** `hactl state list --domain fan --plain`
+
+```bash
+hactl service call fan.turn_on  --entity fan.<id>
+hactl service call fan.turn_off --entity fan.<id>
+hactl service call fan.toggle   --entity fan.<id>
+
+hactl service call fan.set_percentage  --entity fan.<id> --data percentage=60
+hactl service call fan.set_preset_mode --entity fan.<id> --data preset_mode=sleep
+hactl service call fan.oscillate       --entity fan.<id> --data oscillating=true
+hactl service call fan.set_direction   --entity fan.<id> --data direction=forward
+```
+
+### 3.6 — media_player
+
+**Discovery:** `hactl state list --domain media_player --plain`
+
+```bash
+hactl service call media_player.turn_on  --entity media_player.<id>
+hactl service call media_player.media_play   --entity media_player.<id>
+hactl service call media_player.media_pause  --entity media_player.<id>
+hactl service call media_player.media_stop   --entity media_player.<id>
+hactl service call media_player.media_next_track     --entity media_player.<id>
+hactl service call media_player.media_previous_track --entity media_player.<id>
+
+hactl service call media_player.volume_set  --entity media_player.<id> --data volume_level=0.4
+hactl service call media_player.volume_up   --entity media_player.<id>
+hactl service call media_player.volume_down --entity media_player.<id>
+hactl service call media_player.volume_mute --entity media_player.<id> --data is_volume_muted=true
+
+# Source selection — replace HDMI1 with a source your device supports
+hactl service call media_player.select_source --entity media_player.<id> --data source=HDMI1
+
+hactl service call media_player.turn_off --entity media_player.<id>
+```
+
+### 3.7 — vacuum
+
+**Discovery:** `hactl state list --domain vacuum --plain`
+
+```bash
+hactl service call vacuum.start          --entity vacuum.<id>
+hactl service call vacuum.pause          --entity vacuum.<id>
+hactl service call vacuum.stop           --entity vacuum.<id>
+hactl service call vacuum.return_to_base --entity vacuum.<id>
+hactl service call vacuum.locate         --entity vacuum.<id>
+hactl service call vacuum.clean_spot     --entity vacuum.<id>
+```
+
+### 3.8 — lock
+
+**Discovery:** `hactl state list --domain lock --plain`
+
+> **Caution:** test with a lock you can physically verify and re-lock immediately.
+
+```bash
+hactl service call lock.lock   --entity lock.<id>
+hactl state get lock.<id> --plain   # verify: locked
+
+hactl service call lock.unlock --entity lock.<id>
+hactl state get lock.<id> --plain   # verify: unlocked
+
+hactl service call lock.lock   --entity lock.<id>   # re-lock when done
+```
+
+### 3.9 — alarm_control_panel
+
+**Discovery:** `hactl state list --domain alarm_control_panel --plain`
+
+> **Caution:** use a test/simulator alarm or ensure you can disarm immediately.
+
+```bash
+hactl service call alarm_control_panel.alarm_arm_home    --entity alarm_control_panel.<id>
+hactl service call alarm_control_panel.alarm_disarm      --entity alarm_control_panel.<id> --data code=1234
+hactl service call alarm_control_panel.alarm_arm_away    --entity alarm_control_panel.<id>
+hactl service call alarm_control_panel.alarm_disarm      --entity alarm_control_panel.<id> --data code=1234
+hactl service call alarm_control_panel.alarm_arm_night   --entity alarm_control_panel.<id>
+hactl service call alarm_control_panel.alarm_disarm      --entity alarm_control_panel.<id> --data code=1234
+```
+
+### 3.10 — siren
+
+**Discovery:** `hactl state list --domain siren --plain`
+
+```bash
+hactl service call siren.turn_on  --entity siren.<id>
+hactl service call siren.turn_off --entity siren.<id>
+hactl service call siren.toggle   --entity siren.<id>
+```
+
+### 3.11 — scene
+
+**Discovery:** `hactl state list --domain scene --plain`
+
+```bash
+hactl service call scene.turn_on --entity scene.<id>
+```
+
+Expected: devices in the scene change to their preset states.
+
+### 3.12 — script
+
+**Discovery:** `hactl state list --domain script --plain`
+
+```bash
+hactl service call script.turn_on --entity script.<id>
+
+# With extra data
+hactl service call script.<id> --data mode=fast
+```
+
+### 3.13 — button
+
+**Discovery:** `hactl state list --domain button --plain`
+
+```bash
+hactl service call button.press --entity button.<id>
+```
+
+Expected: button action fires in HA (check logbook if unsure).
+
+### 3.14 — input_number
+
+**Discovery:** `hactl state list --domain input_number --plain`
+
+```bash
+hactl service call input_number.set_value --entity input_number.<id> --data value=55
+hactl state get input_number.<id> --plain   # verify: 55
+
+hactl service call input_number.increment --entity input_number.<id>
+hactl service call input_number.decrement --entity input_number.<id>
+```
+
+### 3.15 — input_select
+
+**Discovery:** `hactl state list --domain input_select --plain`
+
+```bash
+# List available options first
+hactl state get input_select.<id> | jq '.attributes.options'
+
+hactl service call input_select.select_option   --entity input_select.<id> --data option=<valid_option>
+hactl service call input_select.select_next     --entity input_select.<id>
+hactl service call input_select.select_previous --entity input_select.<id>
+```
+
+### 3.16 — input_datetime
+
+**Discovery:** `hactl state list --domain input_datetime --plain`
+
+```bash
+# Time only
+hactl service call input_datetime.set_datetime --entity input_datetime.<id> --data time=07:30:00
+
+# Full datetime
+hactl service call input_datetime.set_datetime --entity input_datetime.<id> --data "datetime=2026-03-01 07:30:00"
+```
+
+### 3.17 — Repeatable --data flag
+
+```bash
+hactl service call notify.mobile_app_<phone> \
+  --data title="hactl test" \
+  --data message="Testing repeatable data flags"
+```
+
+Expected: notification arrives on the device.
+
+### 3.18 — Domain mismatch guard
+
+```bash
+# light entity targeted with a switch service
+hactl service call switch.turn_on --entity light.<your_light>
+```
+
+Expected: `error: domain mismatch: service switch.turn_on cannot target a light entity` with a `did you mean:` hint.
+
+### 3.19 — Missing --entity hint
+
+```bash
+hactl service call light.turn_on
+```
+
+Expected: error message that includes `hint: this service may require --entity <entity_id>`.
+
+### 3.20 — homeassistant cross-domain services (allowed in both modes)
+
+```bash
+hactl service call homeassistant.turn_off --entity light.<your_light>
+hactl state get light.<your_light> --plain   # verify: off
+
+hactl service call homeassistant.turn_on  --entity light.<your_light>
+hactl service call homeassistant.toggle   --entity switch.<your_switch>
+```
+
+Expected: no domain-mismatch error; devices respond.
 
 ---
 
-## 4. Restricted services
+## 4. Restricted services (homeassistant.restart / stop)
+
+### 4.1 — Blocked in exposed mode (default)
 
 ```bash
-echo "=== 4. Restricted services ==="
-
-# 4.1 — homeassistant.restart blocked in exposed mode
-run "restart_blocked" service call homeassistant.restart
-assert_exit 1 "restart_blocked"
-assert_stderr "restart_blocked" "not permitted in exposed mode"
-
-# 4.2 — homeassistant.check_config allowed in all mode
-# NOTE: requires filter.mode: all in config — skip in auto mode.
-confirm "Set filter.mode: all in config, then test homeassistant.check_config?" && {
-  run "check_config_all_mode" service call homeassistant.check_config
-  assert_exit 0 "check_config_all_mode"
-  echo ">>> Restore filter.mode: exposed in config before continuing <<<"
-}
+# Ensure config has no filter.mode override, or set filter.mode: exposed
+hactl service call homeassistant.restart
 ```
+
+Expected: `error: service homeassistant.restart is not permitted in exposed mode` with hint to set `filter.mode: all`.
+
+### 4.2 — Allowed in all mode
+
+Add `filter.mode: all` to `~/.config/hactl/config.yaml`, then:
+
+```bash
+hactl service call homeassistant.check_config
+```
+
+Expected: success (JSON or plain response from HA). Do **not** test `restart`/`stop`
+unless you are certain you want HA to restart.
+
+Restore `filter.mode: exposed` (or remove the key) after this test.
 
 ---
 
 ## 5. Automations
 
+### 5.1 — List
+
 ```bash
-echo "=== 5. Automations ==="
+hactl automation list
+hactl automation list --plain
+```
 
-# 5.1 — List
-run "automation_list" automation list
-assert_exit 0 "automation_list"
-assert_json "automation_list" 'type == "array"'
+Expected: JSON array (or plain text) with `entity_id`, `state` (on/off),
+`friendly_name`, and `last_triggered`.
 
-run "automation_list_plain" automation list --plain
-assert_exit 0 "automation_list_plain"
+### 5.2 — Trigger
 
-# 5.2 — Trigger
-skip_if_unset AUTOMATION_ID "5.2 automation trigger" && {
-  run "automation_trigger" automation trigger "$AUTOMATION_ID"
-  assert_exit 0 "automation_trigger"
+```bash
+# Discovery: pick an automation ID from the list above
+hactl automation trigger automation.<id>
 
-  # Without prefix
-  BARE_ID="${AUTOMATION_ID#automation.}"
-  run "automation_trigger_bare" automation trigger "$BARE_ID"
-  assert_exit 0 "automation_trigger_bare"
-}
+# Without prefix (prefix added automatically)
+hactl automation trigger <id_without_prefix>
+```
 
-# 5.3 — Disable and re-enable
-skip_if_unset AUTOMATION_ID "5.3 automation enable/disable" && {
-  run "automation_disable" automation disable "$AUTOMATION_ID"
-  assert_exit 0 "automation_disable"
+Expected: automation runs; plain output `triggered automation.<id>`.
 
-  run "automation_list_after_disable" automation list
-  assert_exit 0 "automation_list_after_disable"
-  assert_json "automation_list_after_disable" \
-    "[.[] | select(.entity_id == \"$AUTOMATION_ID\") | .state == \"off\"] | any"
+### 5.3 — Disable and enable
 
-  run "automation_enable" automation enable "$AUTOMATION_ID"
-  assert_exit 0 "automation_enable"
+```bash
+hactl automation disable automation.<id>
+hactl automation list --plain   # verify: <name> [off]
 
-  run "automation_list_after_enable" automation list
-  assert_json "automation_list_after_enable" \
-    "[.[] | select(.entity_id == \"$AUTOMATION_ID\") | .state == \"on\"] | any"
-}
+hactl automation enable automation.<id>
+hactl automation list --plain   # verify: <name> [on]
 ```
 
 ---
 
 ## 6. Todo lists
 
+### 6.1 — Discovery
+
 ```bash
-echo "=== 6. Todo lists ==="
+hactl todo list
+```
 
-# 6.1 — List all todo lists
-run "todo_list_all" todo list
-assert_exit 0 "todo_list_all"
-assert_json "todo_list_all" 'type == "array"'
+Expected: all exposed todo lists with their items (JSON or plain).
 
-# 6.2 — List a specific list
-skip_if_unset TODO_ID "6.2 todo list specific" && {
-  run "todo_list_specific" todo list "$TODO_ID"
-  assert_exit 0 "todo_list_specific"
-  assert_json "todo_list_specific" 'type == "array"'
+### 6.2 — List a specific todo list
 
-  run "todo_list_plain" todo list "$TODO_ID" --plain
-  assert_exit 0 "todo_list_plain"
+```bash
+# With prefix
+hactl todo list todo.<list_id>
 
-  # Without prefix
-  BARE_TODO="${TODO_ID#todo.}"
-  run "todo_list_bare" todo list "$BARE_TODO"
-  assert_exit 0 "todo_list_bare"
-}
+# Without prefix (added automatically)
+hactl todo list <list_id>
 
-# 6.3 — Add, complete, remove round-trip
-skip_if_unset TODO_ID "6.3 todo add/done/remove" && {
-  TEST_ITEM="hactl-test-item-$(date +%s)"
+# Plain output
+hactl todo list <list_id> --plain
+```
 
-  run "todo_add" todo add "$TODO_ID" "$TEST_ITEM"
-  assert_exit 0 "todo_add"
+Expected: plain output uses `[ ]` and `[x]` status markers.
 
-  run "todo_list_after_add" todo list "$TODO_ID"
-  assert_exit 0 "todo_list_after_add"
-  assert_json "todo_list_after_add" \
-    "[.[] | select(.summary == \"$TEST_ITEM\") | .status == \"needs_action\"] | any"
+### 6.3 — Add, complete, and remove an item
 
-  run "todo_done" todo done "$TODO_ID" "$TEST_ITEM"
-  assert_exit 0 "todo_done"
+```bash
+hactl todo add <list_id> "hactl test item"
+hactl todo list <list_id> --plain   # verify item appears with [ ]
 
-  run "todo_list_after_done" todo list "$TODO_ID"
-  assert_json "todo_list_after_done" \
-    "[.[] | select(.summary == \"$TEST_ITEM\") | .status == \"completed\"] | any"
+hactl todo done <list_id> "hactl test item"
+hactl todo list <list_id> --plain   # verify item shows [x]
 
-  run "todo_remove" todo remove "$TODO_ID" "$TEST_ITEM"
-  assert_exit 0 "todo_remove"
+hactl todo remove <list_id> "hactl test item"
+hactl todo list <list_id> --plain   # verify item is gone
+```
 
-  run "todo_list_after_remove" todo list "$TODO_ID"
-  assert_json "todo_list_after_remove" \
-    "[.[] | select(.summary == \"$TEST_ITEM\")] | length == 0"
-}
+### 6.4 — Plain and quiet output
 
-# 6.4 — Quiet and plain output
-skip_if_unset TODO_ID "6.4 todo quiet/plain" && {
-  QUIET_ITEM="hactl-quiet-$(date +%s)"
+```bash
+hactl todo add <list_id> "quiet test" --quiet
+echo "exit: $?"   # should be 0, no stdout
 
-  run "todo_add_quiet" todo add "$TODO_ID" "$QUIET_ITEM" --quiet
-  assert_exit 0 "todo_add_quiet"
-  [[ ! -s "$HACTL_TEST_LOG/todo_add_quiet.out" ]] \
-    && _pass "todo_add_quiet: stdout empty" \
-    || _fail "todo_add_quiet: unexpected stdout"
+hactl todo add <list_id> "plain test" --plain
+# Expected: added "plain test" to todo.<list_id>
 
-  run "todo_add_plain" todo add "$TODO_ID" "plain-test-$(date +%s)" --plain
-  assert_exit 0 "todo_add_plain"
-  grep -q "added" "$HACTL_TEST_LOG/todo_add_plain.out" \
-    && _pass "todo_add_plain: 'added' in output" \
-    || _fail "todo_add_plain: expected 'added' in output"
-
-  # Clean up quiet item
-  run "todo_cleanup" todo remove "$TODO_ID" "$QUIET_ITEM" --quiet
-}
+hactl todo remove <list_id> "quiet test" --quiet
+hactl todo remove <list_id> "plain test" --quiet
 ```
 
 ---
 
 ## 7. History
 
+### 7.1 — JSON output
+
 ```bash
-echo "=== 7. History ==="
-
-# 7.1 — JSON output
-skip_if_unset SENSOR_ID "7.1 history json" && {
-  run "history_json" history "$SENSOR_ID" --last 1h
-  assert_exit 0 "history_json"
-  assert_json "history_json" 'type == "array"'
-}
-
-# 7.2 — Plain output
-skip_if_unset LIGHT_ID "7.2 history plain" && {
-  run "history_plain" history "$LIGHT_ID" --last 1h --plain
-  assert_exit 0 "history_plain"
-  assert_nonempty_stdout "history_plain"
-}
-
-# 7.3 — Invalid duration format
-skip_if_unset SENSOR_ID "7.3 history invalid duration" && {
-  run "history_bad_duration" history "$SENSOR_ID" --last 2days
-  assert_exit 1 "history_bad_duration"
-  assert_stderr "history_bad_duration" "invalid"
-}
-
-# 7.4 — Non-existent entity
-run "history_nonexistent" history "light.this_entity_does_not_exist" --last 1h
-assert_exit 1 "history_nonexistent"
-assert_stderr "history_nonexistent" "entity not found"
+hactl history sensor.<your_sensor> --last 1h
+hactl history light.<your_light> --last 24h
 ```
+
+Expected: JSON array of history entries with `entity_id`, `state`, and
+`last_changed` fields.
+
+### 7.2 — Plain output
+
+```bash
+hactl history light.<your_light> --last 1h --plain
+```
+
+Expected: compact prose, e.g. `on at 08:32, off at 09:15, on at 14:20 (still on)`.
+
+### 7.3 — No history in window
+
+```bash
+hactl history sensor.<rarely_changing_sensor> --last 1m --plain
+```
+
+Expected: `no history for <entity> in the last 1m` (or an empty JSON array in JSON mode).
+
+### 7.4 — Invalid duration
+
+```bash
+hactl history sensor.<your_sensor> --last 2days
+```
+
+Expected: `error: invalid --last value "2days": use values like 1h, 30m, 24h`
 
 ---
 
 ## 8. Summary
 
+### 8.1 — Full JSON summary
+
 ```bash
-echo "=== 8. Summary ==="
-
-# 8.1 — Full JSON summary
-run "summary_json" summary
-assert_exit 0 "summary_json"
-assert_json "summary_json" 'has("generated_at") and has("domains")'
-assert_json "summary_json" '.domains | type == "array"'
-
-# 8.2 — Plain summary
-run "summary_plain" summary --plain
-assert_exit 0 "summary_plain"
-assert_nonempty_stdout "summary_plain"
-# Plain output must not be JSON
-grep -qE '^\[|^\{' "$HACTL_TEST_LOG/summary_plain.out" \
-  && _fail "summary_plain: output looks like JSON" \
-  || _pass "summary_plain: not JSON"
-
-# 8.3 — Area-filtered summary
-skip_if_unset AREA_ID "8.3 summary area filter" && {
-  run "summary_area" summary --area "$AREA_ID"
-  assert_exit 0 "summary_area"
-  assert_json "summary_area" 'has("domains")'
-}
-
-# 8.4 — Quiet mode
-run "summary_quiet" summary --quiet
-assert_exit 0 "summary_quiet"
-[[ ! -s "$HACTL_TEST_LOG/summary_quiet.out" ]] \
-  && _pass "summary_quiet: stdout empty" \
-  || _fail "summary_quiet: unexpected stdout"
+hactl summary
 ```
+
+Expected: JSON object with `generated_at`, `domains` array, and optionally `alerts`.
+Each domain entry has `domain`, `total`, `active`, `inactive`, and `entities`.
+
+### 8.2 — Plain summary
+
+```bash
+hactl summary --plain
+```
+
+Expected: single-line prose, e.g.
+`lights: 2 on (Living Room 60%, Kitchen), 3 off (...), Thermostat heat setpoint 21.5°C (actual 20.3°C)`
+
+### 8.3 — Area-filtered summary
+
+```bash
+hactl area list --plain    # find an area id
+hactl summary --area <area_id>
+hactl summary --area <area_id> --plain
+```
+
+Expected: only entities assigned to that area appear in the digest.
+
+### 8.4 — Alert detection
+
+Verify alerts are surfaced correctly:
+- **Light on during daytime** (07:00–21:00): turn a light on and run `hactl summary`.
+  JSON `alerts` array and `--plain` output should mention it.
+- **Unlocked lock**: if you have a lock entity, unlock it and run `hactl summary`.
+  Expect a `lock open:` alert.
+- **Unusual climate setpoint**: set temperature below 16 or above 26 °C, then run
+  `hactl summary`. Expect an unusual-temperature alert.
 
 ---
 
 ## 9. Areas
 
+### 9.1 — JSON listing
+
 ```bash
-echo "=== 9. Areas ==="
-
-# 9.1 — JSON listing
-run "area_list" area list
-assert_exit 0 "area_list"
-assert_json "area_list" 'type == "array"'
-assert_json "area_list" '[.[]] | map(has("area_id") and has("name")) | all'
-
-# 9.2 — Plain listing
-run "area_list_plain" area list --plain
-assert_exit 0 "area_list_plain"
-assert_nonempty_stdout "area_list_plain"
-grep -q "id=" "$HACTL_TEST_LOG/area_list_plain.out" \
-  && _pass "area_list_plain: (id=...) format present" \
-  || _fail "area_list_plain: (id=...) format missing"
+hactl area list
 ```
+
+Expected: JSON array with `area_id` and `name` fields.
+
+### 9.2 — Plain listing
+
+```bash
+hactl area list --plain
+```
+
+Expected: one line per area: `Living Room (id=sala)`
 
 ---
 
 ## 10. Persons
 
+### 10.1 — JSON listing
+
 ```bash
-echo "=== 10. Persons ==="
-
-# 10.1 — JSON listing
-run "person_list" person list
-assert_exit 0 "person_list"
-assert_json "person_list" 'type == "array"'
-skip_if_unset PERSON_ID "10.1 person fields" && {
-  assert_json "person_list" '[.[]] | map(has("entity_id") and has("state")) | all'
-}
-
-# 10.2 — Plain listing
-run "person_list_plain" person list --plain
-assert_exit 0 "person_list_plain"
-skip_if_unset PERSON_ID "10.2 person plain" && {
-  assert_nonempty_stdout "person_list_plain"
-  # Each line should be "Name: state"
-  grep -qE '.+: (home|not_home|.+)' "$HACTL_TEST_LOG/person_list_plain.out" \
-    && _pass "person_list_plain: 'Name: state' format" \
-    || _fail "person_list_plain: unexpected format"
-}
+hactl person list
 ```
+
+Expected: JSON array with `entity_id`, `friendly_name`, `state`.
+State is `home`, `not_home`, or a zone name.
+
+### 10.2 — Plain listing
+
+```bash
+hactl person list --plain
+```
+
+Expected: `Joao Barroca: home` (one line per person).
 
 ---
 
 ## 11. Weather
 
+### 11.1 — Auto-select first weather entity (JSON)
+
 ```bash
-echo "=== 11. Weather ==="
-
-# 11.1 — Auto-select first weather entity
-run "weather_auto" weather
-assert_exit 0 "weather_auto"
-assert_json "weather_auto" 'has("entity_id") and has("condition")'
-
-# 11.2 — Explicit entity
-skip_if_unset WEATHER_ID "11.2 weather explicit" && {
-  run "weather_explicit" weather "$WEATHER_ID"
-  assert_exit 0 "weather_explicit"
-  assert_json "weather_explicit" '.entity_id == "'"$WEATHER_ID"'"'
-
-  # Without prefix
-  BARE_WEATHER="${WEATHER_ID#weather.}"
-  run "weather_bare" weather "$BARE_WEATHER"
-  assert_exit 0 "weather_bare"
-}
-
-# 11.3 — Plain output
-run "weather_plain" weather --plain
-assert_exit 0 "weather_plain"
-assert_nonempty_stdout "weather_plain"
-grep -qE '^[a-z]' "$HACTL_TEST_LOG/weather_plain.out" \
-  && _pass "weather_plain: starts with condition word" \
-  || _fail "weather_plain: unexpected format"
+hactl weather
 ```
+
+Expected: JSON with `entity_id`, `condition`, `temperature`, `humidity`,
+`wind_speed`, and optionally `forecast`.
+
+### 11.2 — Explicit entity
+
+```bash
+hactl weather weather.<your_weather_entity>
+
+# Without prefix (added automatically)
+hactl weather <your_weather_entity_name>
+```
+
+### 11.3 — Plain output
+
+```bash
+hactl weather --plain
+```
+
+Expected: single line, e.g.
+`sunny, 21.5°C, humidity 60%, wind 12.0 km/h; forecast: Mon rainy 22/14, Tue sunny 20`
+
+### 11.4 — No weather entity
+
+If you temporarily remove the weather entity from exposed entities (run `hactl sync`
+after removing it from Assist), then:
+
+```bash
+hactl weather
+```
+
+Expected: `error: no weather entity found`
 
 ---
 
 ## 12. Events stream
 
-> **Manual only.** The events stream is interactive and cannot be asserted
-> automatically. Run the commands below in a separate terminal, trigger a state
-> change (e.g. toggle a light), verify events appear, then Ctrl-C.
+### 12.1 — Stream all events
 
 ```bash
-echo "=== 12. Events (manual verification required) ==="
-echo "[MANUAL] hactl events watch"
-echo "[MANUAL] hactl events watch --type state_changed"
-echo "[MANUAL] hactl events watch --domain light"
-echo "[MANUAL] hactl events watch --type state_changed --plain"
-echo "Run each in a separate terminal. Toggle a device to trigger events."
-echo "Verify compact 'entity: old -> new' format appears with --plain."
-_pass "events: marked as manual — no automated assertion"
+# Run in one terminal, trigger some HA actions in another
+hactl events watch
 ```
+
+Expected: JSON lines appear for each HA event. Press Ctrl-C to stop.
+
+### 12.2 — Filter by event type
+
+```bash
+hactl events watch --type state_changed
+```
+
+Expected: only `state_changed` events appear. Trigger a state change (e.g. toggle a switch) to verify.
+
+### 12.3 — Filter by domain
+
+```bash
+hactl events watch --domain light
+```
+
+Expected: only events for `light.*` entities appear. Toggle a light to verify.
+
+### 12.4 — Combined filters
+
+```bash
+hactl events watch --type state_changed --domain motion
+```
+
+Expected: only `state_changed` events for `motion.*` entities.
+
+### 12.5 — Plain output
+
+```bash
+hactl events watch --plain --type state_changed
+```
+
+Expected: compact lines like `light.living_room: off -> on`
 
 ---
 
 ## 13. Output format consistency
 
-```bash
-echo "=== 13. Output format consistency ==="
+Run these checks across at least one representative command per group:
 
-# JSON must be valid for state list
-jq . "$HACTL_TEST_LOG/state_list.out" > /dev/null 2>&1 \
-  && _pass "format: state_list is valid JSON" \
-  || _fail "format: state_list is not valid JSON"
-
-# --plain must not contain JSON brackets
-grep -qE '^\[|^\{' "$HACTL_TEST_LOG/summary_plain.out" \
-  && _fail "format: summary_plain contains JSON" \
-  || _pass "format: summary_plain is not JSON"
-
-# --quiet must produce no stdout
-[[ ! -s "$HACTL_TEST_LOG/summary_quiet.out" ]] \
-  && _pass "format: summary_quiet stdout empty" \
-  || _fail "format: summary_quiet stdout non-empty"
-
-# Non-zero exit on error
-[[ "$(cat "$HACTL_TEST_LOG/state_get_nonexistent.exit")" != "0" ]] \
-  && _pass "format: error produces non-zero exit" \
-  || _fail "format: error produced exit 0"
-
-# Stderr is clean on success
-[[ ! -s "$HACTL_TEST_LOG/state_list.err" ]] \
-  && _pass "format: state_list stderr empty on success" \
-  || _fail "format: state_list wrote to stderr on success"
-```
+| Check | Command | Expected |
+|---|---|---|
+| Default JSON is valid | `hactl state list \| jq .` | parses without error |
+| `--plain` is single-line prose | `hactl summary --plain` | no JSON brackets |
+| `--quiet` produces no stdout | `hactl state get sensor.<id> --quiet && echo ok` | only `ok` printed |
+| `--quiet` exit code 0 on success | `hactl service call switch.turn_on --entity switch.<id> --quiet; echo $?` | `0` |
+| Non-zero exit on error | `hactl state get light.nonexistent; echo $?` | non-zero (e.g. `1`) |
 
 ---
 
-## 14. Entity filter
+## 14. Entity filter modes
+
+### 14.1 — Exposed mode (default): hidden entity blocked
+
+Identify an entity that is **not** exposed to HA Assist, then:
 
 ```bash
-echo "=== 14. Entity filter ==="
-
-# 14.1 — Hidden entity: same error as non-existent
-# Find a real entity that is NOT in the exposed cache.
-HIDDEN_ENTITY=$(comm -13 \
-  <(jq -r '.[]' ~/.config/hactl/exposed-entities.json | sort) \
-  <(hactl state list --domain sensor 2>/dev/null | \
-    jq -r '.[].entity_id' | sort) \
-  | head -1)
-
-if [[ -n "$HIDDEN_ENTITY" ]]; then
-  run "state_get_hidden" state get "$HIDDEN_ENTITY"
-  assert_exit 1 "state_get_hidden"
-  assert_stderr "state_get_hidden" "entity not found"
-
-  # Error message must be identical format to non-existent entity
-  HIDDEN_MSG=$(cat "$HACTL_TEST_LOG/state_get_hidden.err")
-  NONEXIST_MSG=$(cat "$HACTL_TEST_LOG/state_get_nonexistent.err")
-  HIDDEN_PATTERN=$(echo "$HIDDEN_MSG"   | sed 's/: .*/: /')
-  NONEXIST_PATTERN=$(echo "$NONEXIST_MSG" | sed 's/: .*/: /')
-  [[ "$HIDDEN_PATTERN" == "$NONEXIST_PATTERN" ]] \
-    && _pass "filter: hidden and non-existent produce identical error format" \
-    || _fail "filter: error messages differ — hidden='$HIDDEN_MSG' nonexist='$NONEXIST_MSG'"
-else
-  echo "[SKIP] 14.1 — no unexposed sensor entity available on this setup"
-fi
-
-# 14.2 — All mode: hidden entity accessible
-# (requires manual config change — gate behind confirm)
-confirm "Switch config to filter.mode: all and test access to hidden entity $HIDDEN_ENTITY?" && {
-  if [[ -n "$HIDDEN_ENTITY" ]]; then
-    run "state_get_hidden_all_mode" state get "$HIDDEN_ENTITY"
-    assert_exit 0 "state_get_hidden_all_mode"
-    assert_json "state_get_hidden_all_mode" 'has("state")'
-    echo ">>> Restore filter.mode: exposed before continuing <<<"
-  else
-    echo "[SKIP] No hidden entity available"
-  fi
-}
+hactl state get <hidden_entity>
 ```
+
+Expected: `error: entity not found: <hidden_entity>` — indistinguishable from
+a non-existent entity.
+
+### 14.2 — All mode: hidden entity accessible
+
+```bash
+# Add filter.mode: all to ~/.config/hactl/config.yaml
+hactl state get <hidden_entity>
+```
+
+Expected: the entity's full state JSON is returned.
+
+### 14.3 — Restore exposed mode after the above test
 
 ---
 
-## 15. Sync
+## 15. hactl sync (detailed)
 
-```bash
-echo "=== 15. Sync ==="
+### 15.1 — Cache update after exposing a new entity
 
-# 15.1 — Re-sync and verify cache files are updated
-run "sync_rerun" sync
-assert_exit 0 "sync_rerun"
+1. In HA Assist settings, expose a new entity.
+2. Run `hactl sync`.
+3. Confirm the entity now appears in `hactl state list`.
 
-CACHE_MTIME=$(stat -f "%m" ~/.config/hactl/exposed-entities.json 2>/dev/null \
-  || stat -c "%Y" ~/.config/hactl/exposed-entities.json 2>/dev/null)
-NOW=$(date +%s)
-AGE=$(( NOW - CACHE_MTIME ))
-[[ "$AGE" -lt 30 ]] \
-  && _pass "sync_rerun: exposed-entities.json updated within last 30s" \
-  || _fail "sync_rerun: exposed-entities.json not recently updated (age=${AGE}s)"
+### 15.2 — Cache update after hiding an entity
 
-# 15.2 — Entity count matches state list
-CACHE_COUNT=$(jq 'length' ~/.config/hactl/exposed-entities.json)
-LIST_COUNT=$(jq 'length' "$HACTL_TEST_LOG/state_list.out")
-[[ "$CACHE_COUNT" -eq "$LIST_COUNT" ]] \
-  && _pass "sync_rerun: cache count ($CACHE_COUNT) matches state list ($LIST_COUNT)" \
-  || _fail "sync_rerun: cache count ($CACHE_COUNT) ≠ state list ($LIST_COUNT)"
-```
+1. In HA Assist settings, hide an entity that was previously visible.
+2. Run `hactl sync`.
+3. Confirm the entity now returns `error: entity not found` from `hactl state get`.
+
+### 15.3 — Area mapping update
+
+1. Reassign an entity to a different area in HA.
+2. Run `hactl sync`.
+3. Confirm `hactl state list --area <new_area>` includes the entity,
+   and `--area <old_area>` no longer does.
 
 ---
 
-## 16. Admin commands
+## 16. Admin commands — expose / unexpose / rename
 
-> Requires `filter.mode: all` in `~/.config/hactl/config.yaml`.
-> Use a non-critical entity (e.g. a sensor or helper).
+These commands require `filter.mode: all` in `~/.config/hactl/config.yaml`.
+Use a non-critical entity for testing (e.g. a sensor or helper) to avoid
+accidentally hiding something important.
+
+### 16.1 — Guard: blocked in exposed mode
 
 ```bash
-echo "=== 16. Admin commands ==="
-
-# 16.1 — Guard: all three commands blocked in exposed mode
-run "expose_guard"   expose   "${SENSOR_ID:-sensor.test}"
-assert_exit 1 "expose_guard"
-assert_stderr "expose_guard" "filter.mode: all"
-
-run "unexpose_guard" unexpose "${SENSOR_ID:-sensor.test}"
-assert_exit 1 "unexpose_guard"
-assert_stderr "unexpose_guard" "filter.mode: all"
-
-run "rename_guard"   rename   "${SENSOR_ID:-sensor.test}" "Test"
-assert_exit 1 "rename_guard"
-assert_stderr "rename_guard" "filter.mode: all"
-
-# 16.2–16.10 — Require filter.mode: all
-confirm "Switch config to filter.mode: all to test expose/unexpose/rename?" && {
-  skip_if_unset SENSOR_ID "16.3–16.9" || {
-    echo "[SKIP] 16.3–16.9: SENSOR_ID not set"
-  }
-  skip_if_unset SENSOR_ID "16.3–16.9" && {
-    ORIG_NAME=$(hactl state get "$SENSOR_ID" 2>/dev/null | jq -r '.attributes.friendly_name // empty')
-
-    # 16.3 — unexpose
-    run "admin_unexpose" unexpose "$SENSOR_ID"
-    assert_exit 0 "admin_unexpose"
-    run "admin_sync_after_unexpose" sync
-    assert_exit 0 "admin_sync_after_unexpose"
-    run "admin_get_after_unexpose" state get "$SENSOR_ID"
-    assert_exit 1 "admin_get_after_unexpose"
-    assert_stderr "admin_get_after_unexpose" "entity not found"
-
-    # 16.4 — re-expose
-    run "admin_expose" expose "$SENSOR_ID"
-    assert_exit 0 "admin_expose"
-    run "admin_sync_after_expose" sync
-    assert_exit 0 "admin_sync_after_expose"
-    run "admin_get_after_expose" state get "$SENSOR_ID"
-    assert_exit 0 "admin_get_after_expose"
-    assert_json "admin_get_after_expose" 'has("state")'
-
-    # 16.5 — rename
-    run "admin_rename" rename "$SENSOR_ID" "hactl Test Sensor"
-    assert_exit 0 "admin_rename"
-    run "admin_sync_after_rename" sync
-    assert_exit 0 "admin_sync_after_rename"
-    run "admin_get_after_rename" state get "$SENSOR_ID"
-    assert_exit 0 "admin_get_after_rename"
-    assert_json "admin_get_after_rename" '.attributes.friendly_name == "hactl Test Sensor"'
-
-    # 16.6 — entity ID unchanged after rename
-    assert_json "admin_get_after_rename" ".entity_id == \"$SENSOR_ID\""
-
-    # 16.7 — restore original name
-    [[ -n "$ORIG_NAME" ]] && {
-      run "admin_rename_restore" rename "$SENSOR_ID" "$ORIG_NAME"
-      assert_exit 0 "admin_rename_restore"
-      run "admin_sync_restore" sync
-      assert_exit 0 "admin_sync_restore"
-    }
-
-    # 16.8 — quiet output
-    run "admin_expose_quiet" expose "$SENSOR_ID" --quiet
-    assert_exit 0 "admin_expose_quiet"
-    [[ ! -s "$HACTL_TEST_LOG/admin_expose_quiet.out" ]] \
-      && _pass "admin_expose_quiet: stdout empty" \
-      || _fail "admin_expose_quiet: unexpected stdout"
-
-    # 16.9 — invalid entity
-    run "admin_expose_invalid" expose "light.entity_that_does_not_exist_xyz"
-    assert_exit 1 "admin_expose_invalid"
-  }
-
-  echo ">>> Restore filter.mode: exposed in config and run sync before continuing <<<"
-  confirm "Confirm you have restored filter.mode: exposed and run hactl sync"
-}
+# Ensure filter.mode is "exposed" (or not set — it defaults to exposed)
+hactl expose sensor.<any_sensor>
+hactl unexpose sensor.<any_sensor>
+hactl rename sensor.<any_sensor> "Test Name"
 ```
+
+Expected for each:
+```
+error: this command requires filter.mode: all in ~/.config/hactl/config.yaml
+       these are admin operations — set filter.mode: all to proceed
+```
+
+### 16.2 — Setup: switch to all mode
+
+Add `filter.mode: all` to `~/.config/hactl/config.yaml` before the tests below.
+Restore `filter.mode: exposed` when done with this section.
+
+### 16.3 — unexpose: hide an entity from Assist
+
+Pick an entity that is currently exposed:
+
+```bash
+# Confirm it is visible before the test
+hactl state get sensor.<your_sensor>   # should succeed
+
+hactl unexpose sensor.<your_sensor>
+# Expected: Entity 'sensor.<your_sensor>' is now hidden from Assist.
+#           Run 'hactl sync' to update the local cache.
+
+hactl sync
+hactl state get sensor.<your_sensor>   # should now return: error: entity not found
+```
+
+### 16.4 — expose: re-expose the entity
+
+```bash
+hactl expose sensor.<your_sensor>
+# Expected: Entity 'sensor.<your_sensor>' is now exposed to Assist.
+#           Run 'hactl sync' to update the local cache.
+
+hactl sync
+hactl state get sensor.<your_sensor>   # should succeed again
+```
+
+### 16.5 — rename: set a friendly name
+
+```bash
+# Record the current friendly_name
+hactl state get sensor.<your_sensor> | jq '.attributes.friendly_name'
+
+hactl rename sensor.<your_sensor> "hactl Test Sensor"
+# Expected: Entity 'sensor.<your_sensor>' renamed to 'hactl Test Sensor'.
+#           Run 'hactl sync' to update the local cache.
+
+hactl sync
+hactl state get sensor.<your_sensor> | jq '.attributes.friendly_name'
+# Expected: "hactl Test Sensor"
+```
+
+### 16.6 — rename: entity ID is unchanged
+
+```bash
+hactl state get sensor.<your_sensor> | jq '.entity_id'
+```
+
+Expected: the original entity ID — rename only changes the display name.
+
+### 16.7 — rename: restore original name
+
+```bash
+hactl rename sensor.<your_sensor> "<original_friendly_name>"
+hactl sync
+```
+
+### 16.8 — Quiet and plain output
+
+```bash
+hactl expose sensor.<your_sensor> --quiet
+echo "exit: $?"   # should be 0, no stdout
+
+hactl unexpose sensor.<your_sensor> --plain 2>/dev/null || true
+# (plain is not a special format for these commands — output is the same prose line)
+```
+
+### 16.9 — Invalid entity ID
+
+```bash
+hactl expose light.entity_that_does_not_exist
+```
+
+Expected: HA returns an error (entity not in registry); hactl prints `error: <HA error message>`.
+
+### 16.10 — Restore exposed mode
+
+Set `filter.mode: exposed` (or remove the key) in `~/.config/hactl/config.yaml`
+and run `hactl sync` to confirm everything is back to normal.
 
 ---
 
 ## 17. Edge cases
 
-```bash
-echo "=== 17. Edge cases ==="
-
-# --data without =
-skip_if_unset LIGHT_ID "17.1 --data no equals" && {
-  run "edge_data_no_equals" service call light.turn_on --entity "$LIGHT_ID" --data brightness
-  assert_exit 1 "edge_data_no_equals"
-  assert_stderr "edge_data_no_equals" "key=value"
-}
-
-# --area with no matching entities
-run "edge_area_nonexistent" state list --area "this_area_does_not_exist_xyz"
-assert_exit 0 "edge_area_nonexistent"
-assert_json "edge_area_nonexistent" '. == []'
-
-# todo list with no todo entities (relies on section 6 having run)
-[[ -z "$TODO_ID" ]] && {
-  run "edge_todo_none" todo list
-  assert_exit 0 "edge_todo_none"
-  grep -q "no todo lists found" "$HACTL_TEST_LOG/edge_todo_none.out" \
-    && _pass "edge_todo_none: 'no todo lists found'" \
-    || _fail "edge_todo_none: expected 'no todo lists found'"
-}
-
-# automation trigger with non-existent ID
-run "edge_automation_nonexistent" automation trigger "nonexistent_automation_xyz"
-assert_exit 1 "edge_automation_nonexistent"
-assert_stderr "edge_automation_nonexistent" "entity not found"
-
-# expose in exposed mode (already covered in 16.1 — verify label)
-assert_exit 1 "expose_guard"
-assert_stderr "expose_guard" "filter.mode: all"
-```
+| Scenario | Command | Expected |
+|---|---|---|
+| `--data` without `=` | `hactl service call light.turn_on --entity light.<id> --data brightness` | `error: --data must be in key=value format` |
+| `--rgb` wrong component count | `hactl service call light.turn_on --entity light.<id> --rgb 255,128` | silently ignored (3 parts not present); or verify JSON payload has no `rgb_color` |
+| Service without entity where entity required | `hactl service call light.turn_on` | error with hint |
+| `hactl state list --area nonexistent` | no entities match | returns empty JSON array `[]` or empty plain output |
+| `hactl history` with invalid entity | `hactl history light.nonexistent --last 1h` | `error: entity not found: light.nonexistent` |
+| `hactl todo list` with no exposed todo lists | depends on setup | `no todo lists found` message |
+| `hactl automation trigger nonexistent` | `hactl automation trigger nonexistent_automation` | `error: entity not found: automation.nonexistent_automation` |
+| `hactl expose` in exposed mode | `hactl expose light.<id>` | `error: this command requires filter.mode: all …` |
+| `hactl expose` unknown entity (all mode) | `hactl expose light.does_not_exist` | error from HA entity registry |
+| `hactl rename` without sync | rename then check `hactl summary --plain` | friendly name not updated until `hactl sync` is run |
 
 ---
 
-## 18. Security audit
+## 18. Security audit review
 
-Validates captured logs for security-relevant properties.
-Run this block last, after all other sections have completed.
+Run this section after completing all other tests. The goal is to detect
+unexpected data exposure, filter bypasses, or information leakage in the
+captured logs.
 
-```bash
-echo "=== 18. Security audit ==="
-
-# 18.1 — Token must not appear in any log file
-if grep -rl "$HASS_TOKEN" "$HACTL_TEST_LOG" 2>/dev/null | grep -qv '^$'; then
-  _fail "sec: HASS_TOKEN found in log files — review before sharing"
-  grep -rl "$HASS_TOKEN" "$HACTL_TEST_LOG"
-else
-  _pass "sec: HASS_TOKEN not in any log file"
-fi
-
-# 18.2 — Observed entity IDs must all be in the exposed cache
-EXPOSED=$(jq -r '.[]' ~/.config/hactl/exposed-entities.json 2>/dev/null | sort)
-OBSERVED=$(jq -r '.[].entity_id' "$HACTL_TEST_LOG/state_list.out" 2>/dev/null | sort)
-EXTRA=$(comm -13 <(echo "$EXPOSED") <(echo "$OBSERVED"))
-if [[ -n "$EXTRA" ]]; then
-  _fail "sec: entities in state list NOT in exposed cache (filter bypass):"
-  echo "$EXTRA"
-else
-  _pass "sec: all observed entities are in the exposed cache"
-fi
-
-# 18.3 — Hidden and non-existent entities must produce identical error format
-if [[ -f "$HACTL_TEST_LOG/state_get_hidden.err" ]]; then
-  HIDDEN_FMT=$(sed 's/: [^ ]*/: <id>/' "$HACTL_TEST_LOG/state_get_hidden.err")
-  NONEXIST_FMT=$(sed 's/: [^ ]*/: <id>/' "$HACTL_TEST_LOG/state_get_nonexistent.err")
-  [[ "$HIDDEN_FMT" == "$NONEXIST_FMT" ]] \
-    && _pass "sec: hidden and non-existent produce identical error format" \
-    || _fail "sec: error messages differ — probing vector possible"
-else
-  echo "[SKIP] sec 18.3: state_get_hidden not run (no unexposed entity found)"
-fi
-
-# 18.4 — Admin commands blocked in exposed mode
-for label in expose_guard unexpose_guard rename_guard; do
-  if [[ -f "$HACTL_TEST_LOG/${label}.exit" ]]; then
-    assert_exit 1 "$label"
-    assert_stderr "$label" "filter.mode: all"
-  else
-    _fail "sec: $label was never run"
-  fi
-done
-
-# 18.5 — Restricted service blocked in exposed mode
-if [[ -f "$HACTL_TEST_LOG/restart_blocked.exit" ]]; then
-  assert_exit 1 "restart_blocked"
-  assert_stderr "restart_blocked" "not permitted in exposed mode"
-else
-  _fail "sec: restart_blocked was never run"
-fi
-
-# 18.6 — state set blocked for all hardware domains
-for domain in light switch climate cover fan media_player vacuum lock \
-              alarm_control_panel siren button scene script; do
-  label="state_set_blocked_${domain}"
-  [[ ! -f "$HACTL_TEST_LOG/${label}.exit" ]] && continue  # no entity, was skipped
-  assert_exit 1 "$label"
-  assert_stderr "$label" "entities are controlled via services"
-done
-
-# 18.7 — filter.mode must be restored to exposed
-CURRENT_MODE=$(grep -E '^\s*mode:' ~/.config/hactl/config.yaml 2>/dev/null | awk '{print $2}')
-[[ "$CURRENT_MODE" == "exposed" || -z "$CURRENT_MODE" ]] \
-  && _pass "sec: filter.mode is exposed (or defaulting to exposed)" \
-  || _fail "sec: filter.mode=$CURRENT_MODE — restore to exposed immediately"
-```
-
----
-
-## Summary
-
-Run this block last to get a final pass/fail count for the session.
+### 18.1 — Token not present in any log file
 
 ```bash
-echo ""
-echo "========================================"
-echo "  hactl test session summary"
-echo "  Log: $HACTL_TEST_LOG"
-echo "========================================"
-PASS=$(grep -c '^\[PASS\]' "$HACTL_TEST_LOG/failures.log" 2>/dev/null || true)
-FAIL=$(grep -c '^\[FAIL\]' "$HACTL_TEST_LOG/failures.log" 2>/dev/null || true)
-# Count PASS from session output (failures.log only captures failures)
-PASS=$(grep -rh '^\[PASS\]' "$HACTL_TEST_LOG/" 2>/dev/null | wc -l | tr -d ' ')
-FAIL=$(grep -c '.' "$HACTL_TEST_LOG/failures.log" 2>/dev/null || echo 0)
-echo "  PASS: $PASS"
-echo "  FAIL: $FAIL"
-if [[ "$FAIL" -gt 0 ]]; then
-  echo ""
-  echo "Failures:"
-  cat "$HACTL_TEST_LOG/failures.log"
-fi
-echo "========================================"
-[[ "$FAIL" -eq 0 ]] && echo "All checks passed." || echo "Review failures above."
+grep -r "$HASS_TOKEN" "$HACTL_TEST_LOG"
 ```
+
+Expected: **no matches**. If the token appears anywhere in stdout/stderr, it is
+a critical leak — open an issue.
+
+### 18.2 — Hidden entities do not appear in exposed mode output
+
+```bash
+# Collect all entity_ids that appeared in state list output
+jq -r '.[].entity_id' "$HACTL_TEST_LOG/state_list.out" | sort > /tmp/observed_entities.txt
+
+# Compare against the local exposed cache
+jq -r '.[]' ~/.config/hactl/exposed-entities.json | sort > /tmp/expected_entities.txt
+
+diff /tmp/expected_entities.txt /tmp/observed_entities.txt
+```
+
+Expected: **no extra lines** in `/tmp/observed_entities.txt`. Any entity that
+appears in the state list but not in the exposed cache is a filter bypass.
+
+### 18.3 — Error messages are indistinguishable for hidden vs non-existent entities
+
+```bash
+# Logs from tests 1.7 (non-existent) and 14.1 (hidden but real)
+cat "$HACTL_TEST_LOG/state_get_nonexistent.err"
+cat "$HACTL_TEST_LOG/state_get_hidden.err"
+```
+
+Expected: both lines read `error: entity not found: <entity_id>`. If one
+reveals more detail (e.g. "entity hidden" or "access denied"), that is a
+probing vector — open an issue.
+
+### 18.4 — Admin commands blocked in exposed mode
+
+```bash
+cat "$HACTL_TEST_LOG/expose_guard.err"
+cat "$HACTL_TEST_LOG/unexpose_guard.err"
+cat "$HACTL_TEST_LOG/rename_guard.err"
+```
+
+Expected: all three contain `error: this command requires filter.mode: all`.
+If any succeeded without `filter.mode: all` set, that is a privilege escalation
+— open an issue.
+
+### 18.5 — Restricted services blocked in exposed mode
+
+```bash
+cat "$HACTL_TEST_LOG/restart_blocked.err"
+```
+
+Expected: `error: service homeassistant.restart is not permitted in exposed mode`.
+If it succeeded or returned a different error, open an issue.
+
+### 18.6 — State set blocked for hardware domains
+
+Verify the `.err` files from test 2.5 for each blocked domain:
+
+```bash
+for f in "$HACTL_TEST_LOG"/state_set_blocked_*.err; do
+  echo "--- $f ---"
+  cat "$f"
+done
+```
+
+Expected: every file contains `error: <domain> entities are controlled via services`.
+Any domain that did not error means `serviceControlled` is missing an entry —
+open an issue.
+
+### 18.7 — All mode does not persist after tests
+
+```bash
+grep "filter" ~/.config/hactl/config.yaml
+```
+
+Expected: `mode: exposed` (or the key is absent, which defaults to exposed).
+If `mode: all` is still set after the test session, restore it immediately.
+
+### 18.8 — Log summary
+
+```bash
+echo "=== Test session: $HACTL_TEST_LOG ==="
+echo "Total log files: $(ls "$HACTL_TEST_LOG" | wc -l)"
+echo "Non-zero exits:"
+grep -l "^[^0]" "$HACTL_TEST_LOG"/*.exit 2>/dev/null | sed 's/\.exit//'
+echo "Stderr output present:"
+for f in "$HACTL_TEST_LOG"/*.err; do [[ -s "$f" ]] && echo "  $f"; done
+```
+
+Review any unexpected non-zero exits or unexpected stderr output against the
+"Expected" notes in each test section above.
