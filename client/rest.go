@@ -192,3 +192,65 @@ func (c *Client) GetConfig() (map[string]any, error) {
 func (c *Client) BaseURL() string {
 	return c.baseURL
 }
+
+// TodoItem represents a single item in a Home Assistant todo list.
+type TodoItem struct {
+	UID         string `json:"uid"`
+	Summary     string `json:"summary"`
+	Status      string `json:"status"` // "needs_action" or "completed"
+	Description string `json:"description,omitempty"`
+	Due         string `json:"due,omitempty"`
+}
+
+// GetTodoItems fetches all items from a todo list entity.
+// It uses the todo.get_items service with return_response=true (requires HA 2023.11+).
+func (c *Client) GetTodoItems(entityID string) ([]TodoItem, error) {
+	body := map[string]any{
+		"entity_id": entityID,
+	}
+	resp, err := c.r.R().SetBody(body).SetQueryParam("return_response", "true").Post("/api/services/todo/get_items")
+	if err != nil {
+		return nil, fmt.Errorf("connection error: %w", err)
+	}
+	if resp.StatusCode() == http.StatusUnauthorized {
+		return nil, fmt.Errorf("unauthorized: check your HASS_TOKEN")
+	}
+	if resp.StatusCode() == http.StatusNotFound {
+		return nil, fmt.Errorf("todo service not found (requires HA 2023.11+)")
+	}
+	if resp.StatusCode() != http.StatusOK {
+		return nil, fmt.Errorf("unexpected status %d: %s", resp.StatusCode(), resp.String())
+	}
+
+	// HA 2024.x+ wraps the service result under a "response" key:
+	//   {"response": {"entity_id": {"items": [...]}}, "changed_states": [...]}
+	// Older versions return the entity map directly:
+	//   {"entity_id": {"items": [...]}}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(resp.Body(), &raw); err != nil {
+		return nil, fmt.Errorf("failed to parse todo response: %w", err)
+	}
+	// HA wraps the result under "service_response"; fall back to direct map for
+	// any future format changes.
+	entityMap := raw
+	for _, key := range []string{"service_response", "response"} {
+		if data, ok := raw[key]; ok {
+			var inner map[string]json.RawMessage
+			if err := json.Unmarshal(data, &inner); err == nil {
+				entityMap = inner
+				break
+			}
+		}
+	}
+	entityData, ok := entityMap[entityID]
+	if !ok {
+		return nil, nil
+	}
+	var result struct {
+		Items []TodoItem `json:"items"`
+	}
+	if err := json.Unmarshal(entityData, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse todo items: %w", err)
+	}
+	return result.Items, nil
+}

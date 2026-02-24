@@ -136,6 +136,51 @@ hactl service call script.my_script --data timeout=30 --data mode=fast
 hactl service call homeassistant.restart
 ```
 
+### todo
+
+Manage Home Assistant todo lists. Items are read via WebSocket; add/done/remove use the REST service API.
+
+```bash
+# List all exposed todo lists
+hactl todo list
+hactl todo list --plain
+
+# List a specific list
+hactl todo list shopping_list
+hactl todo list todo.shopping_list
+
+# Add an item
+hactl todo add shopping_list "Milk"
+hactl todo add todo.shopping_list "Eggs"
+
+# Mark an item as done
+hactl todo done shopping_list "Milk"
+
+# Remove an item
+hactl todo remove shopping_list "Milk"
+```
+
+### person
+
+Read person location states (home/away/zone name). Read-only.
+
+```bash
+hactl person list
+hactl person list --plain
+# → Joao Barroca: home
+```
+
+### weather
+
+Show current conditions and forecast from a weather entity.
+
+```bash
+hactl weather                              # auto-selects first exposed weather entity
+hactl weather weather.forecast_home
+hactl weather --plain
+# → sunny, 21.5°C, humidity 60%, wind 12.0 km/h; forecast: Wed rainy 22/14, Thu sunny 20
+```
+
 ### automation
 
 ```bash
