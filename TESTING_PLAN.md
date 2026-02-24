@@ -868,7 +868,115 @@ Expected: the entity's full state JSON is returned.
 
 ---
 
-## 16. Edge cases
+## 16. Admin commands — expose / unexpose / rename
+
+These commands require `filter.mode: all` in `~/.config/hactl/config.yaml`.
+Use a non-critical entity for testing (e.g. a sensor or helper) to avoid
+accidentally hiding something important.
+
+### 16.1 — Guard: blocked in exposed mode
+
+```bash
+# Ensure filter.mode is "exposed" (or not set — it defaults to exposed)
+hactl expose sensor.<any_sensor>
+hactl unexpose sensor.<any_sensor>
+hactl rename sensor.<any_sensor> "Test Name"
+```
+
+Expected for each:
+```
+error: this command requires filter.mode: all in ~/.config/hactl/config.yaml
+       these are admin operations — set filter.mode: all to proceed
+```
+
+### 16.2 — Setup: switch to all mode
+
+Add `filter.mode: all` to `~/.config/hactl/config.yaml` before the tests below.
+Restore `filter.mode: exposed` when done with this section.
+
+### 16.3 — unexpose: hide an entity from Assist
+
+Pick an entity that is currently exposed:
+
+```bash
+# Confirm it is visible before the test
+hactl state get sensor.<your_sensor>   # should succeed
+
+hactl unexpose sensor.<your_sensor>
+# Expected: Entity 'sensor.<your_sensor>' is now hidden from Assist.
+#           Run 'hactl sync' to update the local cache.
+
+hactl sync
+hactl state get sensor.<your_sensor>   # should now return: error: entity not found
+```
+
+### 16.4 — expose: re-expose the entity
+
+```bash
+hactl expose sensor.<your_sensor>
+# Expected: Entity 'sensor.<your_sensor>' is now exposed to Assist.
+#           Run 'hactl sync' to update the local cache.
+
+hactl sync
+hactl state get sensor.<your_sensor>   # should succeed again
+```
+
+### 16.5 — rename: set a friendly name
+
+```bash
+# Record the current friendly_name
+hactl state get sensor.<your_sensor> | jq '.attributes.friendly_name'
+
+hactl rename sensor.<your_sensor> "hactl Test Sensor"
+# Expected: Entity 'sensor.<your_sensor>' renamed to 'hactl Test Sensor'.
+#           Run 'hactl sync' to update the local cache.
+
+hactl sync
+hactl state get sensor.<your_sensor> | jq '.attributes.friendly_name'
+# Expected: "hactl Test Sensor"
+```
+
+### 16.6 — rename: entity ID is unchanged
+
+```bash
+hactl state get sensor.<your_sensor> | jq '.entity_id'
+```
+
+Expected: the original entity ID — rename only changes the display name.
+
+### 16.7 — rename: restore original name
+
+```bash
+hactl rename sensor.<your_sensor> "<original_friendly_name>"
+hactl sync
+```
+
+### 16.8 — Quiet and plain output
+
+```bash
+hactl expose sensor.<your_sensor> --quiet
+echo "exit: $?"   # should be 0, no stdout
+
+hactl unexpose sensor.<your_sensor> --plain 2>/dev/null || true
+# (plain is not a special format for these commands — output is the same prose line)
+```
+
+### 16.9 — Invalid entity ID
+
+```bash
+hactl expose light.entity_that_does_not_exist
+```
+
+Expected: HA returns an error (entity not in registry); hactl prints `error: <HA error message>`.
+
+### 16.10 — Restore exposed mode
+
+Set `filter.mode: exposed` (or remove the key) in `~/.config/hactl/config.yaml`
+and run `hactl sync` to confirm everything is back to normal.
+
+---
+
+## 17. Edge cases
 
 | Scenario | Command | Expected |
 |---|---|---|
@@ -879,3 +987,6 @@ Expected: the entity's full state JSON is returned.
 | `hactl history` with invalid entity | `hactl history light.nonexistent --last 1h` | `error: entity not found: light.nonexistent` |
 | `hactl todo list` with no exposed todo lists | depends on setup | `no todo lists found` message |
 | `hactl automation trigger nonexistent` | `hactl automation trigger nonexistent_automation` | `error: entity not found: automation.nonexistent_automation` |
+| `hactl expose` in exposed mode | `hactl expose light.<id>` | `error: this command requires filter.mode: all …` |
+| `hactl expose` unknown entity (all mode) | `hactl expose light.does_not_exist` | error from HA entity registry |
+| `hactl rename` without sync | rename then check `hactl summary --plain` | friendly name not updated until `hactl sync` is run |
