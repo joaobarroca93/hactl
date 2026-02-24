@@ -28,6 +28,7 @@ hactl sync
 ```
 
 Expected:
+
 - Prints `Synced N exposed entities to ~/.config/hactl/exposed-entities.json`
 - Prints `Synced N entity→area mappings to ~/.config/hactl/entity-areas.json`
 - Both cache files exist on disk.
@@ -39,21 +40,30 @@ reviewed later for unexpected data exposure or security regressions.
 
 ```bash
 # Create a timestamped directory for this test session
-export HACTL_TEST_LOG=~/hactl-test-logs/$(date +%Y%m%d_%H%M%S)
+export HACTL_TEST_LOG=$(pwd)/hactl-test-logs/$(date +%Y%m%d_%H%M%S)
 mkdir -p "$HACTL_TEST_LOG"
+: > "$HACTL_TEST_LOG/session.log"   # cumulative log — everything appends here
+echo "Session started: $(date)" >> "$HACTL_TEST_LOG/session.log"
 
 # Helper: run a hactl command, print it, log both stdout and stderr with a label.
+# - Per-label files (.out / .err / .exit) hold the latest result for that label.
+# - session.log is append-only and captures every command in order.
 # Usage: run <label> <hactl args...>
 run() {
   local label="$1"; shift
   local outfile="$HACTL_TEST_LOG/${label}.out"
   local errfile="$HACTL_TEST_LOG/${label}.err"
-  echo "==> $label: hactl $*"
-  hactl "$@" 2>"$errfile" | tee "$outfile"
+  local session="$HACTL_TEST_LOG/session.log"
+  printf '\n==> %s: hactl %s\n' "$label" "$*" | tee -a "$session"
+  hactl "$@" > "$outfile" 2>"$errfile"
   local rc=$?
-  # Log stderr too if non-empty
-  [[ -s "$errfile" ]] && echo "[stderr]" && cat "$errfile"
-  echo "[exit: $rc]"
+  cat "$outfile"              # show stdout on terminal
+  cat "$outfile" >> "$session"
+  if [[ -s "$errfile" ]]; then
+    echo "[stderr]" | tee -a "$session"
+    cat "$errfile" | tee -a "$session"
+  fi
+  echo "[exit: $rc]" | tee -a "$session"
   echo "$rc" > "$HACTL_TEST_LOG/${label}.exit"
   return $rc
 }
@@ -65,6 +75,7 @@ Labels become filenames, so use short snake_case names (e.g. `state_list`,
 
 > **Token safety:** `HASS_TOKEN` must never appear in output files. The helper
 > above does not log env vars, but verify manually before sharing any logs:
+>
 > ```bash
 > grep -r "$HASS_TOKEN" "$HACTL_TEST_LOG" && echo "TOKEN FOUND IN LOGS — review before sharing"
 > ```
@@ -90,6 +101,7 @@ hactl state list
 ```
 
 Expected:
+
 - JSON array printed to stdout.
 - Every object has `entity_id`, `state`, and `attributes` fields.
 - Only entities you have exposed to HA Assist appear.
@@ -233,6 +245,7 @@ hint listing the correct service call.
 ### 3.1 — light
 
 **Discovery:**
+
 ```bash
 hactl state list --domain light --plain
 ```
@@ -253,6 +266,7 @@ hactl service call light.toggle --entity light.<id>
 ```
 
 Convenience flags (use a dimmable colour bulb):
+
 ```bash
 # Brightness (0–100 → converted to 0–255 internally)
 hactl service call light.turn_on --entity light.<id> --brightness 60
@@ -705,12 +719,13 @@ Expected: only entities assigned to that area appear in the digest.
 ### 8.4 — Alert detection
 
 Verify alerts are surfaced correctly:
+
 - **Light on during daytime** (07:00–21:00): turn a light on and run `hactl summary`.
-  JSON `alerts` array and `--plain` output should mention it.
+JSON `alerts` array and `--plain` output should mention it.
 - **Unlocked lock**: if you have a lock entity, unlock it and run `hactl summary`.
-  Expect a `lock open:` alert.
+Expect a `lock open:` alert.
 - **Unusual climate setpoint**: set temperature below 16 or above 26 °C, then run
-  `hactl summary`. Expect an unusual-temperature alert.
+`hactl summary`. Expect an unusual-temperature alert.
 
 ---
 
@@ -846,13 +861,15 @@ Expected: compact lines like `light.living_room: off -> on`
 
 Run these checks across at least one representative command per group:
 
-| Check | Command | Expected |
-|---|---|---|
-| Default JSON is valid | `hactl state list \| jq .` | parses without error |
-| `--plain` is single-line prose | `hactl summary --plain` | no JSON brackets |
-| `--quiet` produces no stdout | `hactl state get sensor.<id> --quiet && echo ok` | only `ok` printed |
-| `--quiet` exit code 0 on success | `hactl service call switch.turn_on --entity switch.<id> --quiet; echo $?` | `0` |
-| Non-zero exit on error | `hactl state get light.nonexistent; echo $?` | non-zero (e.g. `1`) |
+
+| Check                            | Command                                                                   | Expected            |
+| -------------------------------- | ------------------------------------------------------------------------- | ------------------- |
+| Default JSON is valid            | `hactl state list                                                         | jq .`               |
+| `--plain` is single-line prose   | `hactl summary --plain`                                                   | no JSON brackets    |
+| `--quiet` produces no stdout     | `hactl state get sensor.<id> --quiet && echo ok`                          | only `ok` printed   |
+| `--quiet` exit code 0 on success | `hactl service call switch.turn_on --entity switch.<id> --quiet; echo $?` | `0`                 |
+| Non-zero exit on error           | `hactl state get light.nonexistent; echo $?`                              | non-zero (e.g. `1`) |
+
 
 ---
 
@@ -901,7 +918,7 @@ Expected: the entity's full state JSON is returned.
 1. Reassign an entity to a different area in HA.
 2. Run `hactl sync`.
 3. Confirm `hactl state list --area <new_area>` includes the entity,
-   and `--area <old_area>` no longer does.
+  and `--area <old_area>` no longer does.
 
 ---
 
@@ -921,6 +938,7 @@ hactl rename sensor.<any_sensor> "Test Name"
 ```
 
 Expected for each:
+
 ```
 error: this command requires filter.mode: all in ~/.config/hactl/config.yaml
        these are admin operations — set filter.mode: all to proceed
@@ -1015,18 +1033,20 @@ and run `hactl sync` to confirm everything is back to normal.
 
 ## 17. Edge cases
 
-| Scenario | Command | Expected |
-|---|---|---|
-| `--data` without `=` | `hactl service call light.turn_on --entity light.<id> --data brightness` | `error: --data must be in key=value format` |
-| `--rgb` wrong component count | `hactl service call light.turn_on --entity light.<id> --rgb 255,128` | silently ignored (3 parts not present); or verify JSON payload has no `rgb_color` |
-| Service without entity where entity required | `hactl service call light.turn_on` | error with hint |
-| `hactl state list --area nonexistent` | no entities match | returns empty JSON array `[]` or empty plain output |
-| `hactl history` with invalid entity | `hactl history light.nonexistent --last 1h` | `error: entity not found: light.nonexistent` |
-| `hactl todo list` with no exposed todo lists | depends on setup | `no todo lists found` message |
-| `hactl automation trigger nonexistent` | `hactl automation trigger nonexistent_automation` | `error: entity not found: automation.nonexistent_automation` |
-| `hactl expose` in exposed mode | `hactl expose light.<id>` | `error: this command requires filter.mode: all …` |
-| `hactl expose` unknown entity (all mode) | `hactl expose light.does_not_exist` | error from HA entity registry |
-| `hactl rename` without sync | rename then check `hactl summary --plain` | friendly name not updated until `hactl sync` is run |
+
+| Scenario                                     | Command                                                                  | Expected                                                                          |
+| -------------------------------------------- | ------------------------------------------------------------------------ | --------------------------------------------------------------------------------- |
+| `--data` without `=`                         | `hactl service call light.turn_on --entity light.<id> --data brightness` | `error: --data must be in key=value format`                                       |
+| `--rgb` wrong component count                | `hactl service call light.turn_on --entity light.<id> --rgb 255,128`     | silently ignored (3 parts not present); or verify JSON payload has no `rgb_color` |
+| Service without entity where entity required | `hactl service call light.turn_on`                                       | error with hint                                                                   |
+| `hactl state list --area nonexistent`        | no entities match                                                        | returns empty JSON array `[]` or empty plain output                               |
+| `hactl history` with invalid entity          | `hactl history light.nonexistent --last 1h`                              | `error: entity not found: light.nonexistent`                                      |
+| `hactl todo list` with no exposed todo lists | depends on setup                                                         | `no todo lists found` message                                                     |
+| `hactl automation trigger nonexistent`       | `hactl automation trigger nonexistent_automation`                        | `error: entity not found: automation.nonexistent_automation`                      |
+| `hactl expose` in exposed mode               | `hactl expose light.<id>`                                                | `error: this command requires filter.mode: all …`                                 |
+| `hactl expose` unknown entity (all mode)     | `hactl expose light.does_not_exist`                                      | error from HA entity registry                                                     |
+| `hactl rename` without sync                  | rename then check `hactl summary --plain`                                | friendly name not updated until `hactl sync` is run                               |
+
 
 ---
 
