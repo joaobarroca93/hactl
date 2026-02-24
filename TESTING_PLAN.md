@@ -32,7 +32,44 @@ Expected:
 - Prints `Synced N entity→area mappings to ~/.config/hactl/entity-areas.json`
 - Both cache files exist on disk.
 
-### 0.3 — No-token guard
+### 0.3 — Audit log setup
+
+All test output should be saved to a dated log directory so results can be
+reviewed later for unexpected data exposure or security regressions.
+
+```bash
+# Create a timestamped directory for this test session
+export HACTL_TEST_LOG=~/hactl-test-logs/$(date +%Y%m%d_%H%M%S)
+mkdir -p "$HACTL_TEST_LOG"
+
+# Helper: run a hactl command, print it, log both stdout and stderr with a label.
+# Usage: run <label> <hactl args...>
+run() {
+  local label="$1"; shift
+  local outfile="$HACTL_TEST_LOG/${label}.out"
+  local errfile="$HACTL_TEST_LOG/${label}.err"
+  echo "==> $label: hactl $*"
+  hactl "$@" 2>"$errfile" | tee "$outfile"
+  local rc=$?
+  # Log stderr too if non-empty
+  [[ -s "$errfile" ]] && echo "[stderr]" && cat "$errfile"
+  echo "[exit: $rc]"
+  echo "$rc" > "$HACTL_TEST_LOG/${label}.exit"
+  return $rc
+}
+```
+
+Use `run <label> <args>` throughout your session instead of bare `hactl` calls.
+Labels become filenames, so use short snake_case names (e.g. `state_list`,
+`expose_guard`).
+
+> **Token safety:** `HASS_TOKEN` must never appear in output files. The helper
+> above does not log env vars, but verify manually before sharing any logs:
+> ```bash
+> grep -r "$HASS_TOKEN" "$HACTL_TEST_LOG" && echo "TOKEN FOUND IN LOGS — review before sharing"
+> ```
+
+### 0.4 — No-token guard
 
 ```bash
 unset HASS_TOKEN
@@ -990,3 +1027,106 @@ and run `hactl sync` to confirm everything is back to normal.
 | `hactl expose` in exposed mode | `hactl expose light.<id>` | `error: this command requires filter.mode: all …` |
 | `hactl expose` unknown entity (all mode) | `hactl expose light.does_not_exist` | error from HA entity registry |
 | `hactl rename` without sync | rename then check `hactl summary --plain` | friendly name not updated until `hactl sync` is run |
+
+---
+
+## 18. Security audit review
+
+Run this section after completing all other tests. The goal is to detect
+unexpected data exposure, filter bypasses, or information leakage in the
+captured logs.
+
+### 18.1 — Token not present in any log file
+
+```bash
+grep -r "$HASS_TOKEN" "$HACTL_TEST_LOG"
+```
+
+Expected: **no matches**. If the token appears anywhere in stdout/stderr, it is
+a critical leak — open an issue.
+
+### 18.2 — Hidden entities do not appear in exposed mode output
+
+```bash
+# Collect all entity_ids that appeared in state list output
+jq -r '.[].entity_id' "$HACTL_TEST_LOG/state_list.out" | sort > /tmp/observed_entities.txt
+
+# Compare against the local exposed cache
+jq -r '.[]' ~/.config/hactl/exposed-entities.json | sort > /tmp/expected_entities.txt
+
+diff /tmp/expected_entities.txt /tmp/observed_entities.txt
+```
+
+Expected: **no extra lines** in `/tmp/observed_entities.txt`. Any entity that
+appears in the state list but not in the exposed cache is a filter bypass.
+
+### 18.3 — Error messages are indistinguishable for hidden vs non-existent entities
+
+```bash
+# Logs from tests 1.7 (non-existent) and 14.1 (hidden but real)
+cat "$HACTL_TEST_LOG/state_get_nonexistent.err"
+cat "$HACTL_TEST_LOG/state_get_hidden.err"
+```
+
+Expected: both lines read `error: entity not found: <entity_id>`. If one
+reveals more detail (e.g. "entity hidden" or "access denied"), that is a
+probing vector — open an issue.
+
+### 18.4 — Admin commands blocked in exposed mode
+
+```bash
+cat "$HACTL_TEST_LOG/expose_guard.err"
+cat "$HACTL_TEST_LOG/unexpose_guard.err"
+cat "$HACTL_TEST_LOG/rename_guard.err"
+```
+
+Expected: all three contain `error: this command requires filter.mode: all`.
+If any succeeded without `filter.mode: all` set, that is a privilege escalation
+— open an issue.
+
+### 18.5 — Restricted services blocked in exposed mode
+
+```bash
+cat "$HACTL_TEST_LOG/restart_blocked.err"
+```
+
+Expected: `error: service homeassistant.restart is not permitted in exposed mode`.
+If it succeeded or returned a different error, open an issue.
+
+### 18.6 — State set blocked for hardware domains
+
+Verify the `.err` files from test 2.5 for each blocked domain:
+
+```bash
+for f in "$HACTL_TEST_LOG"/state_set_blocked_*.err; do
+  echo "--- $f ---"
+  cat "$f"
+done
+```
+
+Expected: every file contains `error: <domain> entities are controlled via services`.
+Any domain that did not error means `serviceControlled` is missing an entry —
+open an issue.
+
+### 18.7 — All mode does not persist after tests
+
+```bash
+grep "filter" ~/.config/hactl/config.yaml
+```
+
+Expected: `mode: exposed` (or the key is absent, which defaults to exposed).
+If `mode: all` is still set after the test session, restore it immediately.
+
+### 18.8 — Log summary
+
+```bash
+echo "=== Test session: $HACTL_TEST_LOG ==="
+echo "Total log files: $(ls "$HACTL_TEST_LOG" | wc -l)"
+echo "Non-zero exits:"
+grep -l "^[^0]" "$HACTL_TEST_LOG"/*.exit 2>/dev/null | sed 's/\.exit//'
+echo "Stderr output present:"
+for f in "$HACTL_TEST_LOG"/*.err; do [[ -s "$f" ]] && echo "  $f"; done
+```
+
+Review any unexpected non-zero exits or unexpected stderr output against the
+"Expected" notes in each test section above.
