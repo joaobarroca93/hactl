@@ -12,6 +12,7 @@ Complete reference for entity types, available services, and the correct hactl c
 | Virtual / helper (input_boolean, input_text, …) | `hactl state get` | `hactl state set` |
 | Read-only (sensor, binary_sensor, weather, person, …) | `hactl state get` | — not writable |
 | Todo lists | `hactl todo list` | `hactl todo add/done/remove` |
+| Entity registry (expose, name) | — | `hactl expose` / `hactl unexpose` / `hactl rename` *(requires `filter.mode: all`)* |
 
 `hactl state set` is blocked for hardware domains — it updates HA's internal record but sends no command to the device. Always use `hactl service call` for anything physical.
 
@@ -430,6 +431,34 @@ hactl weather --plain
 Useful attributes: `temperature`, `humidity`, `wind_speed`, `temperature_unit`, `wind_speed_unit`, `forecast`.
 
 > **Note:** the `forecast` attribute is populated by many integrations (Met.no, OpenWeatherMap, etc.). If it is absent, the weather command still shows current conditions.
+
+---
+
+### expose / unexpose / rename (admin)
+
+Commands that write directly to the Home Assistant entity registry. **Require `filter.mode: all`** in `~/.config/hactl/config.yaml` — they fail immediately with a clear error if `exposed` mode is active.
+
+| Command | Notes |
+|---|---|
+| `hactl expose <entity_id>` | Mark entity as exposed to HA Assist |
+| `hactl unexpose <entity_id>` | Hide entity from HA Assist |
+| `hactl rename <entity_id> <name>` | Set the friendly display name |
+
+Always run `hactl sync` after any of these to refresh the local entity cache.
+
+`hactl rename` sets the display name only — entity IDs cannot be changed via hactl.
+
+```bash
+# Requires filter.mode: all in config
+hactl expose light.new_bedroom_lamp
+hactl sync
+
+hactl unexpose sensor.wifi_signal_strength
+hactl sync
+
+hactl rename light.shelly_abc123_channel_1 "Desk Lamp"
+hactl sync
+```
 
 ---
 

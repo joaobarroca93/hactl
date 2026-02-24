@@ -136,9 +136,29 @@ hactl service call script.my_script --data timeout=30 --data mode=fast
 hactl service call homeassistant.restart
 ```
 
+### expose / unexpose / rename
+
+Admin commands that write directly to the Home Assistant entity registry. They require `filter.mode: all` in `~/.config/hactl/config.yaml` and will fail immediately if that is not set.
+
+```bash
+# Expose an entity to HA Assist, then refresh the local cache
+hactl expose light.new_bedroom_lamp
+hactl sync
+
+# Hide an entity from HA Assist
+hactl unexpose sensor.wifi_signal_strength
+hactl sync
+
+# Set the friendly display name of an entity
+hactl rename light.shelly_abc123_channel_1 "Desk Lamp"
+hactl sync
+```
+
+> **Note:** `hactl rename` sets the friendly display name only. Entity IDs (e.g. `light.living_room`) are read-only from hactl — use the Home Assistant UI to change them.
+
 ### todo
 
-Manage Home Assistant todo lists. Items are read via WebSocket; add/done/remove use the REST service API.
+Manage Home Assistant todo lists. Items are fetched via the HA REST service API.
 
 ```bash
 # List all exposed todo lists
