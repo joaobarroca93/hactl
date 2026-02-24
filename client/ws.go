@@ -267,6 +267,25 @@ func (ws *WSClient) FetchEntityRegistry() (*EntityRegistryData, error) {
 	return data, nil
 }
 
+// CallCommand sends a generic command and reads the result.
+// The payload must include a "type" key. The message ID is set automatically.
+func (ws *WSClient) CallCommand(payload map[string]any) (*WSMessage, error) {
+	ws.counter++
+	payload["id"] = ws.counter
+	if err := ws.conn.WriteJSON(payload); err != nil {
+		return nil, fmt.Errorf("websocket write error: %w", err)
+	}
+	raw, err := ws.ReadRaw()
+	if err != nil {
+		return nil, err
+	}
+	var msg WSMessage
+	if err := json.Unmarshal(raw, &msg); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return &msg, nil
+}
+
 // toWSURL converts http(s):// to ws(s)://.
 func toWSURL(baseURL string) string {
 	u, err := url.Parse(baseURL)

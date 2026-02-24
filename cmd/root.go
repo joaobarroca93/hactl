@@ -101,7 +101,8 @@ func initClient(cmdName string) error {
 	baseURL = strings.TrimRight(baseURL, "/")
 	restClient = client.New(baseURL, token)
 
-	initFilter(cmdName == "sync")
+	skipCache := cmdName == "sync" || cmdName == "expose" || cmdName == "unexpose" || cmdName == "rename"
+	initFilter(skipCache)
 	return nil
 }
 
