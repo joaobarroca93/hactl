@@ -17,7 +17,7 @@ Check off each test as you complete it. Use `[x]` for pass, `[~]` for skip, `[!]
 - [x] 0.1 Environment setup
 - [x] 0.2 Sync exposed entities
 - [x] 0.3 Audit log setup
-- [ ] 0.4 No-token guard
+- [x] 0.4 No-token guard
 
 **1. State — read**
 - [x] 1.1 List all entities (JSON)
@@ -25,7 +25,7 @@ Check off each test as you complete it. Use `[x]` for pass, `[~]` for skip, `[!]
 - [x] 1.3 List by area
 - [x] 1.4 Get single entity (JSON)
 - [x] 1.5 Get single entity (plain)
-- [ ] 1.6 jq pipeline
+- [x] 1.6 jq pipeline
 - [x] 1.7 Hidden / non-existent entity
 
 **2. State — set**
@@ -41,7 +41,7 @@ Check off each test as you complete it. Use `[x]` for pass, `[~]` for skip, `[!]
 - [~] 3.3 climate — no exposed entities
 - [ ] 3.4 cover
 - [ ] 3.5 fan
-- [ ] 3.6 media_player
+- [x] 3.6 media_player
 - [x] 3.7 vacuum
 - [ ] 3.8 lock
 - [ ] 3.9 alarm_control_panel
@@ -53,19 +53,19 @@ Check off each test as you complete it. Use `[x]` for pass, `[~]` for skip, `[!]
 - [ ] 3.15 input_select
 - [ ] 3.16 input_datetime
 - [x] 3.17 Notify service (no --entity required)
-- [ ] 3.18 Domain mismatch guard
-- [ ] 3.19 Entity-required domain without --entity
-- [ ] 3.20 homeassistant cross-domain
+- [x] 3.18 Domain mismatch guard
+- [x] 3.19 Entity-required domain without --entity
+- [x] 3.20 homeassistant cross-domain
 
 **3b. Service list**
-- [ ] 3b.1 List all services (JSON)
-- [ ] 3b.2 Filter by domain
-- [ ] 3b.3 Plain output
-- [ ] 3b.4 Unknown domain returns empty list
+- [x] 3b.1 List all services (JSON)
+- [x] 3b.2 Filter by domain
+- [x] 3b.3 Plain output
+- [x] 3b.4 Unknown domain returns empty list
 
 **4. Restricted services**
 - [ ] 4.1 Blocked in exposed mode
-- [ ] 4.2 Allowed in all mode
+- [x] 4.2 check_config works in exposed mode
 
 **5. Automations**
 - [ ] 5.1 List
@@ -736,18 +736,15 @@ hactl service call homeassistant.restart
 
 Expected: `error: service homeassistant.restart is not permitted in exposed mode` with hint to set `filter.mode: all`.
 
-### 4.2 — Allowed in all mode
+### 4.2 — check_config works in exposed mode
 
-Add `filter.mode: all` to `~/.config/hactl/config.yaml`, then:
+`homeassistant.check_config` is not restricted — it works without switching to `filter.mode: all`.
 
 ```bash
 hactl service call homeassistant.check_config
 ```
 
-Expected: success (JSON or plain response from HA). Do **not** test `restart`/`stop`
-unless you are certain you want HA to restart.
-
-Restore `filter.mode: exposed` (or remove the key) after this test.
+Expected: success (JSON or plain response from HA). No config change needed.
 
 ---
 
