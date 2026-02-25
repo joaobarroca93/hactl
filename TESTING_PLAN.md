@@ -9,6 +9,148 @@ find suitable entity IDs.
 
 ---
 
+## Progress tracker
+
+Check off each test as you complete it. Use `[x]` for pass, `[~]` for skip, `[!]` for fail.
+
+**Prerequisites**
+- [ ] 0.1 Environment setup
+- [ ] 0.2 Sync exposed entities
+- [ ] 0.3 Audit log setup
+- [ ] 0.4 No-token guard
+
+**1. State — read**
+- [ ] 1.1 List all entities (JSON)
+- [ ] 1.2 List by domain
+- [ ] 1.3 List by area
+- [ ] 1.4 Get single entity (JSON)
+- [ ] 1.5 Get single entity (plain)
+- [ ] 1.6 jq pipeline
+- [ ] 1.7 Hidden / non-existent entity
+
+**2. State — set**
+- [ ] 2.1 input_boolean
+- [ ] 2.2 input_text
+- [ ] 2.3 Plain output on set
+- [ ] 2.4 Quiet mode on set
+- [ ] 2.5 Blocked on hardware domains
+
+**3. Service calls**
+- [ ] 3.1 light
+- [ ] 3.2 switch
+- [ ] 3.3 climate
+- [ ] 3.4 cover
+- [ ] 3.5 fan
+- [ ] 3.6 media_player
+- [ ] 3.7 vacuum
+- [ ] 3.8 lock
+- [ ] 3.9 alarm_control_panel
+- [ ] 3.10 siren
+- [ ] 3.11 scene
+- [ ] 3.12 script
+- [ ] 3.13 button
+- [ ] 3.14 input_number
+- [ ] 3.15 input_select
+- [ ] 3.16 input_datetime
+- [ ] 3.17 Notify service (no --entity required)
+- [ ] 3.18 Domain mismatch guard
+- [ ] 3.19 Entity-required domain without --entity
+- [ ] 3.20 homeassistant cross-domain
+
+**3b. Service list**
+- [ ] 3b.1 List all services (JSON)
+- [ ] 3b.2 Filter by domain
+- [ ] 3b.3 Plain output
+- [ ] 3b.4 Unknown domain returns empty list
+
+**4. Restricted services**
+- [ ] 4.1 Blocked in exposed mode
+- [ ] 4.2 Allowed in all mode
+
+**5. Automations**
+- [ ] 5.1 List
+- [ ] 5.2 Trigger
+- [ ] 5.3 Disable and enable
+
+**6. Todo lists**
+- [ ] 6.1 Discovery
+- [ ] 6.2 List a specific todo list
+- [ ] 6.3 Add, complete, and remove an item
+- [ ] 6.4 Plain and quiet output
+
+**7. History**
+- [ ] 7.1 JSON output
+- [ ] 7.2 Plain output
+- [ ] 7.3 No history in window
+- [ ] 7.4 Invalid duration
+
+**8. Summary**
+- [ ] 8.1 Full JSON summary
+- [ ] 8.2 Plain summary
+- [ ] 8.3 Area-filtered summary
+- [ ] 8.4 Alert detection
+
+**9. Areas**
+- [ ] 9.1 JSON listing
+- [ ] 9.2 Plain listing
+
+**10. Persons**
+- [ ] 10.1 JSON listing
+- [ ] 10.2 Plain listing
+
+**11. Weather**
+- [ ] 11.1 Auto-select first weather entity
+- [ ] 11.2 Explicit entity
+- [ ] 11.3 Plain output
+- [ ] 11.4 No weather entity
+
+**12. Events stream** *(manual — run in separate terminal)*
+- [ ] 12.1 Stream all events
+- [ ] 12.2 Filter by event type
+- [ ] 12.3 Filter by domain
+- [ ] 12.4 Combined filters
+- [ ] 12.5 Plain output
+
+**13. Output format consistency**
+- [ ] 13 Format checks
+
+**14. Entity filter modes**
+- [ ] 14.1 Exposed mode: hidden entity blocked
+- [ ] 14.2 All mode: hidden entity accessible
+- [ ] 14.3 Restore exposed mode
+
+**15. Sync**
+- [ ] 15.1 Cache update after exposing
+- [ ] 15.2 Cache update after hiding
+- [ ] 15.3 Area mapping update
+
+**16. Admin commands**
+- [ ] 16.1 Guard: blocked in exposed mode
+- [ ] 16.2 Setup: switch to all mode
+- [ ] 16.3 unexpose
+- [ ] 16.4 expose
+- [ ] 16.5 rename: set friendly name
+- [ ] 16.6 rename: entity ID unchanged
+- [ ] 16.7 rename: restore original name
+- [ ] 16.8 Quiet and plain output
+- [ ] 16.9 Invalid entity ID
+- [ ] 16.10 Restore exposed mode
+
+**17. Edge cases**
+- [ ] 17 Edge cases
+
+**18. Security audit**
+- [ ] 18.1 Token not in logs
+- [ ] 18.2 Hidden entities not in exposed output
+- [ ] 18.3 Identical error for hidden vs non-existent
+- [ ] 18.4 Admin commands blocked in exposed mode
+- [ ] 18.5 Restricted services blocked
+- [ ] 18.6 State set blocked for hardware domains
+- [ ] 18.7 All mode does not persist
+- [ ] 18.8 Log summary
+
+---
+
 ## Prerequisites
 
 ### 0.1 — Environment setup
@@ -507,7 +649,7 @@ Then send a notification — use the exact slug from the output above:
 hactl service call notify.notify --data title="hactl test" --data message="Testing"
 
 # Target a specific device (replace with slug from service list)
-hactl service call notify.mobile_app_iphone_de_joao \
+hactl service call notify.mobile_<device> \
   --data title="hactl test" \
   --data message="Testing repeatable data flags"
 ```
@@ -876,7 +1018,7 @@ Expected: JSON lines appear for each HA event. Press Ctrl-C to stop.
 ### 12.2 — Filter by event type
 
 ```bash
-hactl events watch --type state_changed
+notifyhactl events watch --type state_changed
 ```
 
 Expected: only `state_changed` events appear. Trigger a state change (e.g. toggle a switch) to verify.
