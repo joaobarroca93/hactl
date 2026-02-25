@@ -14,35 +14,35 @@ find suitable entity IDs.
 Check off each test as you complete it. Use `[x]` for pass, `[~]` for skip, `[!]` for fail.
 
 **Prerequisites**
-- [ ] 0.1 Environment setup
-- [ ] 0.2 Sync exposed entities
-- [ ] 0.3 Audit log setup
+- [x] 0.1 Environment setup
+- [x] 0.2 Sync exposed entities
+- [x] 0.3 Audit log setup
 - [ ] 0.4 No-token guard
 
 **1. State — read**
-- [ ] 1.1 List all entities (JSON)
-- [ ] 1.2 List by domain
-- [ ] 1.3 List by area
-- [ ] 1.4 Get single entity (JSON)
-- [ ] 1.5 Get single entity (plain)
+- [x] 1.1 List all entities (JSON)
+- [x] 1.2 List by domain
+- [x] 1.3 List by area
+- [x] 1.4 Get single entity (JSON)
+- [x] 1.5 Get single entity (plain)
 - [ ] 1.6 jq pipeline
-- [ ] 1.7 Hidden / non-existent entity
+- [x] 1.7 Hidden / non-existent entity
 
 **2. State — set**
-- [ ] 2.1 input_boolean
-- [ ] 2.2 input_text
-- [ ] 2.3 Plain output on set
-- [ ] 2.4 Quiet mode on set
-- [ ] 2.5 Blocked on hardware domains
+- [~] 2.1 input_boolean — no exposed entities
+- [~] 2.2 input_text — no exposed entities
+- [~] 2.3 Plain output on set — no exposed entities
+- [~] 2.4 Quiet mode on set — no exposed entities
+- [x] 2.5 Blocked on hardware domains
 
 **3. Service calls**
-- [ ] 3.1 light
-- [ ] 3.2 switch
-- [ ] 3.3 climate
+- [x] 3.1 light
+- [x] 3.2 switch
+- [~] 3.3 climate — no exposed entities
 - [ ] 3.4 cover
 - [ ] 3.5 fan
 - [ ] 3.6 media_player
-- [ ] 3.7 vacuum
+- [x] 3.7 vacuum
 - [ ] 3.8 lock
 - [ ] 3.9 alarm_control_panel
 - [ ] 3.10 siren
@@ -52,7 +52,7 @@ Check off each test as you complete it. Use `[x]` for pass, `[~]` for skip, `[!]
 - [ ] 3.14 input_number
 - [ ] 3.15 input_select
 - [ ] 3.16 input_datetime
-- [ ] 3.17 Notify service (no --entity required)
+- [x] 3.17 Notify service (no --entity required)
 - [ ] 3.18 Domain mismatch guard
 - [ ] 3.19 Entity-required domain without --entity
 - [ ] 3.20 homeassistant cross-domain
