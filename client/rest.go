@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -191,6 +192,50 @@ func (c *Client) GetConfig() (map[string]any, error) {
 // BaseURL returns the configured base URL (useful for WebSocket client).
 func (c *Client) BaseURL() string {
 	return c.baseURL
+}
+
+// ServiceDomain represents the services available under one HA domain.
+type ServiceDomain struct {
+	Domain   string   `json:"domain"`
+	Services []string `json:"services"`
+}
+
+// GetServices returns a list of domains and their available service names.
+// If domain is non-empty, only that domain is returned.
+func (c *Client) GetServices(domain string) ([]ServiceDomain, error) {
+	resp, err := c.r.R().Get("/api/services")
+	if err != nil {
+		return nil, fmt.Errorf("connection error: %w", err)
+	}
+	if resp.StatusCode() == http.StatusUnauthorized {
+		return nil, fmt.Errorf("unauthorized: check your HASS_TOKEN")
+	}
+	if resp.StatusCode() != http.StatusOK {
+		return nil, fmt.Errorf("unexpected status %d: %s", resp.StatusCode(), resp.String())
+	}
+
+	// HA returns [{domain, services: {svc_name: {fields,...}, ...}}, ...]
+	var raw []struct {
+		Domain   string                     `json:"domain"`
+		Services map[string]json.RawMessage `json:"services"`
+	}
+	if err := json.Unmarshal(resp.Body(), &raw); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	var result []ServiceDomain
+	for _, d := range raw {
+		if domain != "" && d.Domain != domain {
+			continue
+		}
+		sd := ServiceDomain{Domain: d.Domain}
+		for svc := range d.Services {
+			sd.Services = append(sd.Services, svc)
+		}
+		sort.Strings(sd.Services)
+		result = append(result, sd)
+	}
+	return result, nil
 }
 
 // TodoItem represents a single item in a Home Assistant todo list.

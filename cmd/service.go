@@ -179,6 +179,37 @@ Examples:
 	},
 }
 
+var serviceListCmd = &cobra.Command{
+	Use:   "list",
+	Short: "List available Home Assistant services",
+	Long: `List all services available in Home Assistant.
+
+Examples:
+  hactl service list
+  hactl service list --domain notify
+  hactl service list --domain notify --plain`,
+	Args: cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		domain, _ := cmd.Flags().GetString("domain")
+		domains, err := getClient().GetServices(domain)
+		if err != nil {
+			return output.Err("%s", err)
+		}
+		if quiet {
+			return nil
+		}
+		if plain {
+			for _, d := range domains {
+				for _, svc := range d.Services {
+					output.PrintPlain(d.Domain + "." + svc)
+				}
+			}
+			return nil
+		}
+		return output.PrintJSON(domains)
+	},
+}
+
 func init() {
 	serviceCallCmd.Flags().String("entity", "", "entity_id to target")
 	serviceCallCmd.Flags().StringArray("data", nil, "additional key=value pairs (repeatable)")
@@ -188,7 +219,10 @@ func init() {
 	serviceCallCmd.Flags().String("hvac-mode", "", "HVAC mode (heat, cool, auto, off), for climate services")
 	serviceCallCmd.Flags().String("rgb", "", "RGB color as R,G,B (e.g. 255,128,0)")
 
+	serviceListCmd.Flags().String("domain", "", "filter by domain (e.g. notify, light)")
+
 	serviceCmd.AddCommand(serviceCallCmd)
+	serviceCmd.AddCommand(serviceListCmd)
 }
 
 // pollStateChange polls entityID until its state differs from before, or timeout elapses.
