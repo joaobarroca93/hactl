@@ -18,6 +18,34 @@ var restrictedServices = map[string]bool{
 	"homeassistant.stop":    true,
 }
 
+// entityRequiredServiceDomains lists domains whose services always require an
+// entity_id. Calling them without --entity is an error we can catch early.
+// Domains not listed here (notify, homeassistant, tts, …) are passed through
+// as-is and let Home Assistant decide.
+var entityRequiredServiceDomains = map[string]bool{
+	"light":                true,
+	"switch":               true,
+	"climate":              true,
+	"cover":                true,
+	"fan":                  true,
+	"media_player":         true,
+	"vacuum":               true,
+	"lock":                 true,
+	"button":               true,
+	"scene":                true,
+	"script":               true,
+	"alarm_control_panel":  true,
+	"siren":                true,
+	"input_boolean":        true,
+	"input_text":           true,
+	"input_number":         true,
+	"input_select":         true,
+	"input_datetime":       true,
+	"automation":           true,
+	"todo":                 true,
+	"person":               true,
+}
+
 var serviceCmd = &cobra.Command{
 	Use:   "service",
 	Short: "Call Home Assistant services",
@@ -53,6 +81,14 @@ Examples:
 		data := map[string]any{}
 
 		entity, _ := cmd.Flags().GetString("entity")
+
+		// Fail early for domains that always require an entity.
+		if entity == "" && entityRequiredServiceDomains[domain] {
+			return output.Err(
+				"service %s.%s requires --entity\n  use: hactl service call %s.%s --entity %s.<entity_id>",
+				domain, svc, domain, svc, domain,
+			)
+		}
 		if entity != "" {
 			if !entityFilter.IsAllowed(entity) {
 				return output.Err("entity not found: %s", entity)
@@ -112,9 +148,6 @@ Examples:
 
 		_, err := getClient().CallService(domain, svc, data)
 		if err != nil {
-			if entity == "" {
-				return output.Err("%s\n  hint: this service may require --entity <entity_id>", err)
-			}
 			return output.Err("%s", err)
 		}
 
