@@ -111,10 +111,12 @@ hactl state set light.living_room on  # and will raise an error
 
 ### service
 
+#### service call
+
 After a successful call, hactl polls the entity state until it reflects the change (up to 3 seconds), so the output always shows the settled state rather than a stale snapshot.
 
 The following errors are caught before the call is made:
-- **Missing `--entity`**: if HA returns an error and no entity was provided, a hint is added
+- **Missing `--entity`**: entity-domain services (light, switch, climate, etc.) require `--entity`; passthrough domains (`notify`, `homeassistant`, `tts`, …) do not
 - **Domain mismatch**: `light.turn_on --entity switch.fan` is rejected — service and entity domains must match (`homeassistant.*` is exempt)
 - **Restricted services**: `homeassistant.restart` and `homeassistant.stop` are blocked in `filter.mode: exposed` (the default). Set `filter.mode: all` in your config to allow them.
 
@@ -132,8 +134,25 @@ hactl service call switch.toggle --entity switch.fan
 # Extra key=value pairs
 hactl service call script.my_script --data timeout=30 --data mode=fast
 
+# Notify — no --entity needed; service name is the target
+hactl service call notify.notify --data title="Hello" --data message="World"
+hactl service call notify.mobile_app_iphone_de_joao --data title="Hello" --data message="World"
+
 # Restart HA — requires filter.mode: all in config
 hactl service call homeassistant.restart
+```
+
+#### service list
+
+Lists all services available in Home Assistant. Useful for discovering notify targets, automation actions, and integration-specific services.
+
+```bash
+hactl service list                   # all domains, JSON
+hactl service list --domain notify   # filter by domain
+hactl service list --domain notify --plain
+# → notify.mobile_app_iphone_de_joao
+# → notify.notify
+# → notify.persistent_notification
 ```
 
 ### todo

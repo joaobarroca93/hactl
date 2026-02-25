@@ -375,12 +375,12 @@ hactl service call media_player.turn_off --entity media_player.<id>
 **Discovery:** `hactl state list --domain vacuum --plain`
 
 ```bash
-hactl service call vacuum.start          --entity vacuum.<id>
-hactl service call vacuum.pause          --entity vacuum.<id>
-hactl service call vacuum.stop           --entity vacuum.<id>
-hactl service call vacuum.return_to_base --entity vacuum.<id>
-hactl service call vacuum.locate         --entity vacuum.<id>
-hactl service call vacuum.clean_spot     --entity vacuum.<id>
+hactl service call vacuum.start          --entity vacuum.roborock_qrevo_curvx
+hactl service call vacuum.pause          --entity vacuum.roborock_qrevo_curvx
+hactl service call vacuum.stop           --entity vacuum.roborock_qrevo_curvx
+hactl service call vacuum.return_to_base --entity vacuum.roborock_qrevo_curvx
+hactl service call vacuum.locate         --entity vacuum.roborock_qrevo_curvx
+hactl service call vacuum.clean_spot     --entity vacuum.roborock_qrevo_curvx
 ```
 
 ### 3.8 — lock
@@ -492,15 +492,27 @@ hactl service call input_datetime.set_datetime --entity input_datetime.<id> --da
 hactl service call input_datetime.set_datetime --entity input_datetime.<id> --data "datetime=2026-03-01 07:30:00"
 ```
 
-### 3.17 — Repeatable --data flag
+### 3.17 — Notify service (no --entity required)
+
+First, discover the available notify service names:
 
 ```bash
-hactl service call notify.mobile_app_<phone> \
+hactl service list --domain notify --plain
+```
+
+Then send a notification — use the exact slug from the output above:
+
+```bash
+# Broadcast to all
+hactl service call notify.notify --data title="hactl test" --data message="Testing"
+
+# Target a specific device (replace with slug from service list)
+hactl service call notify.mobile_app_iphone_de_joao \
   --data title="hactl test" \
   --data message="Testing repeatable data flags"
 ```
 
-Expected: notification arrives on the device.
+Expected: notification arrives on the device(s); exit 0.
 
 ### 3.18 — Domain mismatch guard
 
@@ -511,13 +523,15 @@ hactl service call switch.turn_on --entity light.<your_light>
 
 Expected: `error: domain mismatch: service switch.turn_on cannot target a light entity` with a `did you mean:` hint.
 
-### 3.19 — Missing --entity hint
+### 3.19 — Entity-required domain without --entity
 
 ```bash
 hactl service call light.turn_on
+hactl service call switch.toggle
+hactl service call climate.set_temperature
 ```
 
-Expected: error message that includes `hint: this service may require --entity <entity_id>`.
+Expected: `error: service <domain>.<svc> requires --entity` with usage hint. Exit 1.
 
 ### 3.20 — homeassistant cross-domain services (allowed in both modes)
 
@@ -530,6 +544,42 @@ hactl service call homeassistant.toggle   --entity switch.<your_switch>
 ```
 
 Expected: no domain-mismatch error; devices respond.
+
+---
+
+## 3b. Service list
+
+### 3b.1 — List all services (JSON)
+
+```bash
+hactl service list
+```
+
+Expected: JSON array where each element has `domain` (string) and `services` (array of strings). Exit 0.
+
+### 3b.2 — Filter by domain
+
+```bash
+hactl service list --domain notify
+```
+
+Expected: JSON array with a single element whose `domain` is `"notify"` and `services` contains at least `"notify"`. Exit 0.
+
+### 3b.3 — Plain output
+
+```bash
+hactl service list --domain notify --plain
+```
+
+Expected: one `notify.<service_name>` per line, no JSON. Exit 0.
+
+### 3b.4 — Unknown domain returns empty list
+
+```bash
+hactl service list --domain this_domain_does_not_exist
+```
+
+Expected: empty JSON array `[]`, exit 0 (not an error — domain simply has no services).
 
 ---
 

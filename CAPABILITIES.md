@@ -433,6 +433,27 @@ Useful attributes: `temperature`, `humidity`, `wind_speed`, `temperature_unit`, 
 
 ---
 
+### notify
+
+Send notifications to devices or notification services. `--entity` is **not required** — the service name itself is the target.
+
+| Service | Notes |
+|---|---|
+| `notify.notify` | Broadcast to all configured notification services |
+| `notify.mobile_app_<device>` | Target a specific mobile device |
+| `notify.persistent_notification` | Create a persistent notification in the HA UI |
+
+```bash
+# Discover available notify services
+hactl service list --domain notify --plain
+
+# Send to all devices
+hactl service call notify.notify --data title="Alert" --data message="Hello"
+
+# Send to a specific phone
+hactl service call notify.mobile_app_iphone_de_joao --data title="Alert" --data message="Hello"
+```
+
 ### homeassistant (system services)
 
 System-wide services. **Blocked in `filter.mode: exposed`.** Require `filter.mode: all` in config.
@@ -495,6 +516,17 @@ hactl summary --area "garagem"
 hactl history sensor.outdoor_temperature --last 24h
 hactl history light.living_room --last 1h --plain
 # → "on at 08:32, off at 09:15, on at 14:20 (still on)"
+```
+
+### List available services
+
+```bash
+hactl service list                   # all domains, JSON
+hactl service list --domain notify   # filter by domain
+hactl service list --domain notify --plain
+# → notify.mobile_app_iphone_de_joao
+# → notify.notify
+# → notify.persistent_notification
 ```
 
 ### Areas
