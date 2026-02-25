@@ -68,61 +68,61 @@ Check off each test as you complete it. Use `[x]` for pass, `[~]` for skip, `[!]
 - [x] 4.2 check_config works in exposed mode
 
 **5. Automations**
-- [ ] 5.1 List
-- [ ] 5.2 Trigger
-- [ ] 5.3 Disable and enable
+- [X] 5.1 List
+- [X] 5.2 Trigger
+- [X] 5.3 Disable and enable
 
 **6. Todo lists**
-- [ ] 6.1 Discovery
-- [ ] 6.2 List a specific todo list
-- [ ] 6.3 Add, complete, and remove an item
-- [ ] 6.4 Plain and quiet output
+- [X] 6.1 Discovery
+- [X] 6.2 List a specific todo list
+- [X] 6.3 Add, complete, and remove an item
+- [X] 6.4 Plain and quiet output
 
 **7. History**
-- [ ] 7.1 JSON output
-- [ ] 7.2 Plain output
-- [ ] 7.3 No history in window
-- [ ] 7.4 Invalid duration
+- [X] 7.1 JSON output
+- [X] 7.2 Plain output
+- [X] 7.3 No history in window
+- [X] 7.4 Invalid duration
 
 **8. Summary**
-- [ ] 8.1 Full JSON summary
-- [ ] 8.2 Plain summary
-- [ ] 8.3 Area-filtered summary
+- [X] 8.1 Full JSON summary
+- [X] 8.2 Plain summary
+- [X] 8.3 Area-filtered summary
 - [ ] 8.4 Alert detection
 
 **9. Areas**
-- [ ] 9.1 JSON listing
-- [ ] 9.2 Plain listing
+- [X] 9.1 JSON listing
+- [X] 9.2 Plain listing
 
 **10. Persons**
-- [ ] 10.1 JSON listing
-- [ ] 10.2 Plain listing
+- [X] 10.1 JSON listing
+- [X] 10.2 Plain listing
 
 **11. Weather**
-- [ ] 11.1 Auto-select first weather entity
-- [ ] 11.2 Explicit entity
-- [ ] 11.3 Plain output
+- [X] 11.1 Auto-select first weather entity
+- [X] 11.2 Explicit entity
+- [X] 11.3 Plain output
 - [ ] 11.4 No weather entity
 
 **12. Events stream** *(manual — run in separate terminal)*
-- [ ] 12.1 Stream all events
-- [ ] 12.2 Filter by event type
-- [ ] 12.3 Filter by domain
-- [ ] 12.4 Combined filters
-- [ ] 12.5 Plain output
+- [x] 12.1 Stream all events
+- [x] 12.2 Filter by event type
+- [x] 12.3 Filter by domain
+- [x] 12.4 Combined filters
+- [x] 12.5 Plain output
 
 **13. Output format consistency**
-- [ ] 13 Format checks
+- [x] 13 Format checks
 
 **14. Entity filter modes**
-- [ ] 14.1 Exposed mode: hidden entity blocked
-- [ ] 14.2 All mode: hidden entity accessible
-- [ ] 14.3 Restore exposed mode
+- [x] 14.1 Exposed mode: hidden entity blocked
+- [x] 14.2 All mode: hidden entity accessible
+- [x] 14.3 Restore exposed mode
 
 **15. Sync**
-- [ ] 15.1 Cache update after exposing
-- [ ] 15.2 Cache update after hiding
-- [ ] 15.3 Area mapping update
+- [x] 15.1 Cache update after exposing
+- [x] 15.2 Cache update after hiding
+- [x] 15.3 Area mapping update
 
 **16. Admin commands**
 - [ ] 16.1 Guard: blocked in exposed mode
@@ -1015,7 +1015,7 @@ Expected: JSON lines appear for each HA event. Press Ctrl-C to stop.
 ### 12.2 — Filter by event type
 
 ```bash
-notifyhactl events watch --type state_changed
+hactl events watch --type state_changed
 ```
 
 Expected: only `state_changed` events appear. Trigger a state change (e.g. toggle a switch) to verify.
