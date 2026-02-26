@@ -457,6 +457,34 @@ hactl service call notify.mobile_app_my_phone --data title="Alert" --data messag
 
 ---
 
+### auth
+
+Authentication management. Does not require an existing token to be configured.
+
+| Command | Notes |
+|---|---|
+| `hactl auth login` | Interactive prompt for HA URL and token; validates and writes config |
+| `hactl auth whoami` | Show HA version and URL for the current token |
+| `hactl auth check` | Exit 0 if token is valid, exit 1 if not configured or unauthorized |
+
+`auth check` is silent on success (exit 0) and writes one line to stderr on failure (exit 1) — intended for pre-flight checks in scripts and agents:
+
+```bash
+hactl auth check || exit 1
+```
+
+`auth whoami` respects `--plain` and `--quiet`:
+
+```bash
+hactl auth whoami --plain
+# → Home Assistant 2024.12.0 · http://192.168.1.10:8123
+
+hactl auth whoami
+# → { "version": "2024.12.0", "hass_url": "http://192.168.1.10:8123" }
+```
+
+---
+
 ### expose / unexpose / rename (admin)
 
 Commands that write directly to the Home Assistant entity registry. **Require `filter.mode: all`** in `~/.config/hactl/config.yaml` — they fail immediately with a clear error if `exposed` mode is active.
