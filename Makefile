@@ -1,7 +1,7 @@
 BIN     := hactl
 PREFIX  := /usr/local/bin
 
-.PHONY: build install test test-v cover clean
+.PHONY: build install test test-v cover clean release-dry-run
 
 build:
 	go build -o $(BIN) .
@@ -21,3 +21,6 @@ cover:
 
 clean:
 	rm -f $(BIN) coverage.out
+
+release-dry-run:
+	goreleaser release --snapshot --clean
