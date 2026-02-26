@@ -5,6 +5,12 @@ hactl is a fast, single-binary CLI for Home Assistant. Built for scripting, AI a
 ## Install
 
 ```bash
+curl -fsSL https://raw.githubusercontent.com/joaobarroca93/hactl/main/install.sh | sh
+```
+
+Or with `go install`:
+
+```bash
 go install github.com/joaobarroca93/hactl@latest
 ```
 
