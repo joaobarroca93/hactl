@@ -143,9 +143,6 @@ func runAuthCheck(cmd *cobra.Command, args []string) error {
 		os.Exit(1)
 	}
 
-	if !quiet {
-		fmt.Println("token valid")
-	}
 	return nil
 }
 
@@ -192,7 +189,7 @@ func saveAuthConfig(hassURL, token string) error {
 	}
 	existing["hass_url"] = hassURL
 	existing["hass_token"] = token
-	if _, ok := existing["filter"]; !ok {
+	if f, ok := existing["filter"].(map[string]any); !ok || f["mode"] == nil {
 		existing["filter"] = map[string]any{"mode": "exposed"}
 	}
 
