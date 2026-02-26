@@ -41,6 +41,14 @@ hactl reads config from environment variables (preferred for secrets) or `~/.con
 | `HASS_TOKEN` | `hass_token`   | *(required)*                     | Long-lived access token      |
 | —            | `filter.mode`  | `exposed`                        | Entity filter mode (see below)|
 
+The quickest way to configure hactl is the interactive login command:
+
+```bash
+hactl auth login
+```
+
+It prompts for your HA URL and token, validates them, and writes the config file automatically.
+
 ### Config file example
 
 ```yaml
@@ -56,7 +64,7 @@ filter:
 
 ### Getting a token
 
-In Home Assistant: **Profile → Long-Lived Access Tokens → Create Token**
+In Home Assistant: **Profile → Security → Long-Lived Access Tokens → Create Token**
 
 ## Entity filter
 
@@ -85,6 +93,27 @@ This connects to Home Assistant, fetches all entities exposed to HA Assist, and 
 | `--config` | Path to config file                            |
 
 ## Commands
+
+### auth
+
+```bash
+# Interactive setup — prompts for URL and token, validates, writes config
+hactl auth login
+
+# Show the current HA version and URL
+hactl auth whoami
+hactl auth whoami --plain
+# → Home Assistant 2024.12.0 · http://192.168.1.10:8123
+
+# Verify the token is valid — exit 0 = ok, exit 1 = fail (no stdout on success)
+hactl auth check
+```
+
+`auth check` is designed for agent pre-flight scripts: it exits 0 silently on success and writes a one-line error to stderr on failure, so it composes cleanly with `||`:
+
+```bash
+hactl auth check || { echo "not configured"; exit 1; }
+```
 
 ### sync
 
@@ -363,15 +392,21 @@ error: connection refused: dial tcp 192.168.1.10:8123: connect: connection refus
 hactl is optimised for use by AI agents. Recommended setup:
 
 ```bash
-# 1. Expose entities to HA Assist in the Home Assistant UI, then:
+# 1. Configure credentials (one-time human step)
+hactl auth login
+
+# 2. Expose entities to HA Assist in the Home Assistant UI, then:
 hactl sync
 
-# 2. Give the agent read-only hactl access — only exposed entities are visible.
+# 3. Give the agent read-only hactl access — only exposed entities are visible.
 ```
 
 Recommended patterns:
 
 ```bash
+# Agent pre-flight check (add to any script or tool that uses hactl)
+hactl auth check || exit 1
+
 # Get a full picture of the home (filtered to exposed entities)
 hactl summary --plain
 

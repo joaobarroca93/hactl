@@ -210,15 +210,29 @@ hactl events watch --type state_changed --domain light   # live stream
 ## Setup reference
 
 ```bash
-# First-time setup
-hactl sync    # fetch all exposed entities into the local cache
+# First-time setup (interactive — run as a human, not an agent)
+hactl auth login   # prompts for URL and token, writes ~/.config/hactl/config.yaml
+hactl sync         # fetch all exposed entities into the local cache
 
 # Re-sync after exposing/hiding entities in HA Assist
 hactl sync
+
+# Pre-flight check — run this before any agent task to fail fast if unconfigured
+hactl auth check || exit 1
 ```
 
 Config lives at `~/.config/hactl/config.yaml`. Set `HASS_URL` and
 `HASS_TOKEN` env vars or put them in the config file.
+
+### Verify auth before acting
+
+When beginning a session or troubleshooting, use `auth whoami` to confirm which
+instance you are connected to:
+
+```bash
+hactl auth whoami --plain
+# → Home Assistant 2024.12.0 · http://192.168.1.10:8123
+```
 
 ## Detailed domain reference
 
