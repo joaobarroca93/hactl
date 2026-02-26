@@ -192,11 +192,51 @@ func saveAuthConfig(hassURL, token string) error {
 	}
 	existing["hass_url"] = hassURL
 	existing["hass_token"] = token
+	if _, ok := existing["filter"]; !ok {
+		existing["filter"] = map[string]any{"mode": "exposed"}
+	}
 
-	data, err := yaml.Marshal(existing)
+	// Marshal to a node tree so we can attach comments before writing.
+	raw, err := yaml.Marshal(existing)
 	if err != nil {
 		return fmt.Errorf("failed to serialize config: %w", err)
 	}
+	var doc yaml.Node
+	if err := yaml.Unmarshal(raw, &doc); err != nil {
+		return fmt.Errorf("failed to parse config for annotation: %w", err)
+	}
+	annotateFilterMode(&doc)
+	data, err := yaml.Marshal(&doc)
+	if err != nil {
+		return fmt.Errorf("failed to marshal annotated config: %w", err)
+	}
 	// 0600: token is sensitive, owner-read-only.
 	return os.WriteFile(path, data, 0600)
+}
+
+// annotateFilterMode adds an inline comment to the filter.mode value explaining
+// the valid options.
+func annotateFilterMode(doc *yaml.Node) {
+	if doc.Kind != yaml.DocumentNode || len(doc.Content) == 0 {
+		return
+	}
+	root := doc.Content[0]
+	if root.Kind != yaml.MappingNode {
+		return
+	}
+	for i := 0; i+1 < len(root.Content); i += 2 {
+		if root.Content[i].Value != "filter" {
+			continue
+		}
+		filterVal := root.Content[i+1]
+		if filterVal.Kind != yaml.MappingNode {
+			return
+		}
+		for j := 0; j+1 < len(filterVal.Content); j += 2 {
+			if filterVal.Content[j].Value == "mode" {
+				filterVal.Content[j+1].LineComment = "# exposed = only Assist-exposed entities; all = every entity"
+				return
+			}
+		}
+	}
 }
