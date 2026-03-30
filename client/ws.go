@@ -3,6 +3,7 @@ package client
 import (
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"net/url"
 	"strings"
 	"time"
@@ -30,7 +31,7 @@ type WSClient struct {
 // NewWS connects and authenticates to the HA WebSocket API.
 func NewWS(baseURL, token string) (*WSClient, error) {
 	wsURL := toWSURL(baseURL)
-	dialer := websocket.Dialer{HandshakeTimeout: 10 * time.Second}
+	dialer := websocket.Dialer{HandshakeTimeout: 10 * time.Second, Proxy: http.ProxyFromEnvironment}
 	conn, _, err := dialer.Dial(wsURL+"/api/websocket", nil)
 	if err != nil {
 		return nil, fmt.Errorf("websocket connection failed: %w", err)
